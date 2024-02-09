@@ -28,8 +28,9 @@ from PIL import Image
 
 from kraken.ketos.util import (_expand_gt, _validate_manifests, message,
                                to_ptl_device)
-from kraken.lib.default_specs import SEGMENTATION_HYPER_PARAMS
 from kraken.lib.exceptions import KrakenInputException
+
+from segfblla.default_specs import SEGMENTATION_HYPER_PARAMS
 
 logging.captureWarnings(True)
 logger = logging.getLogger('kraken')
@@ -108,7 +109,8 @@ def _validate_merging(ctx, param, value):
 @click.option('--optimizer',
               show_default=True,
               default=SEGMENTATION_HYPER_PARAMS['optimizer'],
-              type=click.Choice(['Adam',
+              type=click.Choice(['AdamW',
+                                 'Adam',
                                  'SGD',
                                  'RMSprop',
                                  'Lamb']),

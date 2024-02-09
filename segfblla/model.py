@@ -35,7 +35,7 @@ from torchvision.transforms import functional, v2
 from transformers import SegformerForSemanticSegmentation
 
 from kraken.containers import Segmentation
-from kraken.lib import default_specs
+from segfblla import default_specs
 from kraken.lib.dataset import BaselineSet, ImageInputTransforms
 from kraken.lib.xml import XMLPage
 
@@ -452,8 +452,8 @@ def _configure_optimizer_and_lr_scheduler(hparams, params, len_train_set=None, l
 
     # XXX: Warmup is not configured here because it needs to be manually done in optimizer_step()
     logger.debug(f'Constructing {optimizer} optimizer (lr: {lrate}, momentum: {momentum})')
-    if optimizer == 'Adam':
-        optim = torch.optim.Adam(params, lr=lrate, weight_decay=weight_decay)
+    if optimizer in ['Adam', 'AdamW']:
+        optim = getattr(torch.optim, optimizer)(params, lr=lrate, weight_decay=weight_decay)
     else:
         optim = getattr(torch.optim, optimizer)(params,
                                                 lr=lrate,
