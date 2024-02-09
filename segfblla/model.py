@@ -152,7 +152,7 @@ class SegmentationModel(pl.LightningModule):
             valid_baselines = []
             merge_baselines = None
 
-        train_transforms = v2.Compose([v2.ToImage(),
+        train_transforms = v2.Compose([v2.PILToTensor(),
                                        v2.ToDtype(torch.uint8, scale=True),
                                        v2.Resize(size=1200, antialias=True),
                                        v2.ToDtype(torch.float32, scale=True),
