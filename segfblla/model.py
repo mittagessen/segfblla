@@ -369,7 +369,7 @@ class SegmentationModel(pl.LightningModule):
 
     def train_dataloader(self):
         return DataLoader(self.train_set,
-                          batch_size=1,
+                          batch_size=self.hparams.hyper_params['batch_size'],
                           num_workers=self.num_workers,
                           shuffle=True,
                           pin_memory=True)
@@ -377,7 +377,7 @@ class SegmentationModel(pl.LightningModule):
     def val_dataloader(self):
         return DataLoader(self.val_set,
                           shuffle=False,
-                          batch_size=1,
+                          batch_size=self.hparams.hyper_params['batch_size'],
                           num_workers=self.num_workers,
                           pin_memory=True)
 

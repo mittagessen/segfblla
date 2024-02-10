@@ -62,6 +62,8 @@ def _validate_merging(ctx, param, value):
 
 @click.command('segtrain')
 @click.pass_context
+@click.option('-B', '--batch-size', show_default=True, type=click.INT,
+              default=SEGMENTATION_HYPER_PARAMS['batch_size'], help='batch sample size')
 @click.option('-o', '--output', show_default=True, type=click.Path(), default='model', help='Output model file')
 @click.option('--line-width',
               show_default=True,
@@ -221,9 +223,9 @@ def _validate_merging(ctx, param, value):
 @click.option('--log-dir', show_default=True, type=click.Path(exists=True, dir_okay=True, writable=True),
               help='Path to directory where the logger will store the logs. If not set, a directory will be created in the current working directory.')
 @click.argument('ground_truth', nargs=-1, callback=_expand_gt, type=click.Path(exists=False, dir_okay=False))
-def segtrain(ctx, output, line_width, pad, load, freq, quit, epochs,
-             min_epochs, lag, min_delta, device, precision, optimizer, lrate,
-             momentum, weight_decay, warmup, schedule, gamma, step_size,
+def segtrain(ctx, batch_size, output, line_width, pad, load, freq, quit,
+             epochs, min_epochs, lag, min_delta, device, precision, optimizer,
+             lrate, momentum, weight_decay, warmup, schedule, gamma, step_size,
              sched_patience, cos_max, partition, training_files,
              evaluation_files, workers, threads, load_hyper_parameters,
              force_binarization, format_type, suppress_regions,
@@ -269,6 +271,7 @@ def segtrain(ctx, output, line_width, pad, load, freq, quit, epochs,
     # populate hyperparameters from command line args
     hyper_params = SEGMENTATION_HYPER_PARAMS.copy()
     hyper_params.update({'line_width': line_width,
+                         'batch_size': batch_size,
                          'padding': pad,
                          'freq': freq,
                          'quit': quit,

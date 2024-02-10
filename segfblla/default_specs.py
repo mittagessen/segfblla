@@ -17,6 +17,7 @@ Default hyperparameters
 """
 
 SEGMENTATION_HYPER_PARAMS = {'line_width': 8,
+                             'batch_size': 16,
                              'freq': 1.0,
                              'quit': 'fixed',
                              'epochs': 50,
