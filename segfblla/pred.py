@@ -13,10 +13,10 @@
 # or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 """
-kraken.kraken
+segfblla.pred
 ~~~~~~~~~~~~~
 
-Command line drivers for recognition functionality.
+Command line drivers for recognition inference.
 """
 import dataclasses
 import logging

@@ -13,8 +13,8 @@
 # or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 """
-kraken.ketos.segmentation
-~~~~~~~~~~~~~~~~~~~~~~~~~
+segfbla.train
+~~~~~~~~~~~~~
 
 Command line driver for segmentation training and evaluation.
 """

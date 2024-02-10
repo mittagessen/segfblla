@@ -36,7 +36,7 @@ from transformers import SegformerForSemanticSegmentation
 
 from kraken.containers import Segmentation
 from segfblla import default_specs
-from kraken.lib.dataset import BaselineSet, ImageInputTransforms
+from segfblla.dataset import BaselineSet
 from kraken.lib.xml import XMLPage
 
 if TYPE_CHECKING:
@@ -133,8 +133,6 @@ class SegmentationModel(pl.LightningModule):
         if not training_data:
             raise ValueError('No training data provided. Please add some.')
 
-        self.example_input_array = torch.Tensor(1, 3, 400, 300)
-
         # set multiprocessing tensor sharing strategy
         if 'file_system' in torch.multiprocessing.get_all_sharing_strategies():
             logger.debug('Setting multiprocessing tensor sharing strategy to file_system')
@@ -152,17 +150,7 @@ class SegmentationModel(pl.LightningModule):
             valid_baselines = []
             merge_baselines = None
 
-        train_transforms = v2.Compose([v2.PILToTensor(),
-                                       v2.ToDtype(torch.uint8),
-                                       v2.Resize(size=1200, antialias=True),
-                                       v2.ToDtype(torch.float32),
-                                       v2.Normalize(mean=(0.485, 0.456, 0.406),
-                                                    std=(0.229, 0.224, 0.225))
-                                      ]
-                                     )
-
         train_set = BaselineSet(line_width=self.hparams.hyper_params['line_width'],
-                                im_transforms=train_transforms,
                                 augmentation=self.hparams.hyper_params['augment'],
                                 valid_baselines=valid_baselines,
                                 merge_baselines=merge_baselines,
@@ -175,7 +163,6 @@ class SegmentationModel(pl.LightningModule):
         if evaluation_data:
             val_set = BaselineSet(evaluation_data,
                                   line_width=self.hparams.hyper_params['line_width'],
-                                  im_transforms=train_transforms,
                                   augmentation=False,
                                   valid_baselines=valid_baselines,
                                   merge_baselines=merge_baselines,
