@@ -20,16 +20,19 @@ from collections import defaultdict
 from itertools import groupby
 from typing import TYPE_CHECKING, Any, Callable, Dict, Sequence, Tuple
 
+import cv2
+cv2.setNumThreads(0)
+
 import numpy as np
 import shapely.geometry as geom
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from shapely.ops import split
+from shapely.ops import split, clip_by_rect
 from skimage.draw import polygon
 from torch.utils.data import Dataset
 from torchvision import transforms
-from albumentations import RandomCrop
+import albumentations as A
 from torchvision.transforms import v2
 
 if TYPE_CHECKING:
@@ -49,7 +52,6 @@ class BaselineSet(Dataset):
     """
     def __init__(self,
                  line_width: int = 4,
-                 padding: Tuple[int, int, int, int] = (0, 0, 0, 0),
                  augmentation: bool = False,
                  valid_baselines: Sequence[str] = None,
                  merge_baselines: Dict[str, Sequence[str]] = None,
@@ -60,8 +62,6 @@ class BaselineSet(Dataset):
 
         Args:
             line_width: Height of the baseline in the scaled input.
-            padding: Tuple of ints containing the left/right, top/bottom
-                     padding of the input images.
             target_size: Target size of the image as a (height, width) tuple.
             augmentation: Enable/disable augmentation.
             valid_baselines: Sequence of valid baseline identifiers. If `None`
@@ -78,7 +78,6 @@ class BaselineSet(Dataset):
         super().__init__()
         self.imgs = []
         self.im_mode = '1'
-        self.pad = padding
         self.targets = []
         # n-th entry contains semantic of n-th class
         self.class_mapping = {'aux': {'_start_separator': 0, '_end_separator': 1}, 'baselines': {}, 'regions': {}}
@@ -93,36 +92,28 @@ class BaselineSet(Dataset):
 
         self.aug = None
         if augmentation:
-            import cv2
-            cv2.setNumThreads(0)
-            from albumentations import (Blur, Compose, ElasticTransform,
-                                        HueSaturationValue, MedianBlur,
-                                        MotionBlur, OneOf, OpticalDistortion,
-                                        ShiftScaleRotate, ToFloat)
-
-            self.aug = Compose([
-                                ToFloat(),
-                                OneOf([
-                                    MotionBlur(p=0.2),
-                                    MedianBlur(blur_limit=3, p=0.1),
-                                    Blur(blur_limit=3, p=0.1),
-                                ], p=0.2),
-                                ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.2, rotate_limit=45, p=0.2),
-                                OneOf([
-                                    OpticalDistortion(p=0.3),
-                                    ElasticTransform(p=0.1),
-                                ], p=0.2),
-                                HueSaturationValue(hue_shift_limit=20, sat_shift_limit=0.1, val_shift_limit=0.1, p=0.3),
-                               ], p=0.5)
+            self.aug = A.Compose([A.ToFloat(),
+                                  A.OneOf([
+                                      A.MotionBlur(p=0.2),
+                                      A.MedianBlur(blur_limit=3, p=0.1),
+                                      A.Blur(blur_limit=3, p=0.1),
+                                  ], p=0.2),
+                                  A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.2, rotate_limit=45, p=0.2),
+                                  A.OneOf([
+                                      A.OpticalDistortion(p=0.3),
+                                      A.ElasticTransform(p=0.1),
+                                  ], p=0.2),
+                                  A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=0.1, val_shift_limit=0.1, p=0.3),
+                                  A.ToGray(p=0.5)
+                                 ], p=0.5)
         self.line_width = line_width
         self.transforms = v2.Compose([v2.PILToTensor(),
-                                      v2.ToDtype(torch.float32),
-                                      v2.Normalize(mean=(0.485, 0.456, 0.406),
-                                                   std=(0.229, 0.224, 0.225))
+                                      v2.ConvertDtype(torch.float32),
+                                      #v2.Normalize(mean=(0.485, 0.456, 0.406),
+                                      #             std=(0.229, 0.224, 0.225))
                                      ]
                                     )
-
-        self.patch_crop = RandomCrop(256, 256, always_apply=True)
+        self.patch_crop = v2.RandomCrop((256, 256))
         self.seg_type = None
 
     def add(self, doc: 'Segmentation'):
@@ -196,7 +187,11 @@ class BaselineSet(Dataset):
     def transform(self, image, target):
         orig_size = image.size
         image = self.transforms(image)
-        t = torch.zeros((self.num_classes,) + tuple(np.subtract(image.shape[1:], (2*self.pad[1], 2*self.pad[0]))))
+        i, j, h, w = self.patch_crop.get_params(image, (256, 256))
+        image = v2.functional.crop(image, i, j, h, w)
+
+        t = torch.zeros((self.num_classes,) + image.shape[1:])
+
         start_sep_cls = self.class_mapping['aux']['_start_separator']
         end_sep_cls = self.class_mapping['aux']['_end_separator']
 
@@ -212,23 +207,37 @@ class BaselineSet(Dataset):
                 line = np.array(line)
                 shp_line = geom.LineString(line)
                 split_offset = min(5, shp_line.length/2)
-                line_pol = np.array(shp_line.buffer(self.line_width/2, cap_style=2).boundary.coords, dtype=int)
+                line_pol = clip_by_rect(shp_line.buffer(self.line_width/2, cap_style=2), j, i, j+w, i+h)
+                # line outside of patch -> continue
+                if not line_pol:
+                    continue
+                line_pol = np.array(line_pol.boundary.coords, dtype=int) - (j, i)
                 rr, cc = polygon(line_pol[:, 1], line_pol[:, 0], shape=image.shape[1:])
                 t[cls_idx, rr, cc] = 1
                 split_pt = shp_line.interpolate(split_offset).buffer(0.001)
                 # top
-                start_sep = np.array((split(shp_line, split_pt).geoms[0].buffer(self.line_width,
-                                                                                cap_style=3).boundary.coords), dtype=int)
-                rr_s, cc_s = polygon(start_sep[:, 1], start_sep[:, 0], shape=image.shape[1:])
-                t[start_sep_cls, rr_s, cc_s] = 1
-                t[start_sep_cls, rr, cc] = 0
+                start_sep = clip_by_rect(split(shp_line,
+                                                split_pt).geoms[0].buffer(self.line_width,
+                                                                          cap_style=3),
+                                          j, i, j+w, i+h)
+                # start_sep in image
+                if start_sep:
+                    start_sep = np.array(start_sep.boundary.coords, dtype=int) - (j, i)
+                    rr_s, cc_s = polygon(start_sep[:, 1], start_sep[:, 0], shape=image.shape[1:])
+                    t[start_sep_cls, rr_s, cc_s] = 1
+                    t[start_sep_cls, rr, cc] = 0
                 split_pt = shp_line.interpolate(-split_offset).buffer(0.001)
                 # top
-                end_sep = np.array((split(shp_line, split_pt).geoms[-1].buffer(self.line_width,
-                                                                               cap_style=3).boundary.coords), dtype=int)
-                rr_s, cc_s = polygon(end_sep[:, 1], end_sep[:, 0], shape=image.shape[1:])
-                t[end_sep_cls, rr_s, cc_s] = 1
-                t[end_sep_cls, rr, cc] = 0
+                end_sep = clip_by_rect(split(shp_line,
+                                                split_pt).geoms[-1].buffer(self.line_width,
+                                                                          cap_style=3),
+                                          j, i, j+w, i+h)
+                # end_sep in image
+                if end_sep:
+                    end_sep = np.array(end_sep.boundary.coords, dtype=int) - (j, i)
+                    rr_s, cc_s = polygon(end_sep[:, 1], end_sep[:, 0], shape=image.shape[1:])
+                    t[end_sep_cls, rr_s, cc_s] = 1
+                    t[end_sep_cls, rr, cc] = 0
         for key, regions in target['regions'].items():
             try:
                 cls_idx = self.class_mapping['regions'][key]
@@ -236,15 +245,12 @@ class BaselineSet(Dataset):
                 # skip regions of classes not present in the training set
                 continue
             for region in regions:
-                region = np.array(region.boundary)
-                rr, cc = polygon(region[:, 1], region[:, 0], shape=image.shape[1:])
-                t[cls_idx, rr, cc] = 1
-        target = F.pad(t, self.pad)
-        image = image.permute(1, 2, 0).numpy()
-        target = target.permute(1, 2, 0).numpy()
-        o = self.patch_crop(image=image, mask=target)
-        image = torch.tensor(o['image']).permute(2, 0, 1)
-        target = torch.tensor(o['mask']).permute(2, 0, 1)
+                region = clip_by_rect(geom.Polygon(region.boundary), j, i, j+w, i+h)
+                if region:
+                    region = np.array(region.boundary.coords, dtype=int) - (j, i)
+                    rr, cc = polygon(region[:, 1], region[:, 0], shape=image.shape[1:])
+                    t[cls_idx, rr, cc] = 1
+        target = t
         if self.aug:
             image = image.permute(1, 2, 0).numpy()
             target = target.permute(1, 2, 0).numpy()
