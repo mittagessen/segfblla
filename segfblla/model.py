@@ -34,7 +34,8 @@ from torchvision.transforms import functional, v2
 
 from transformers import SegformerForSemanticSegmentation
 
-from kraken.containers import Segmentation
+from kraken.lib.ro.model import DummyVGSLModel
+
 from segfblla import default_specs
 from segfblla.dataset import BaselineSet
 from kraken.lib.xml import XMLPage
@@ -117,7 +118,6 @@ class SegmentationModel(pl.LightningModule):
             hyper_params_.update(hyper_params)
 
         self.hyper_params = hyper_params_
-        self.save_hyperparameters()
 
         if format_type in ['xml', 'page', 'alto']:
             logger.info(f'Parsing {len(training_data)} XML files for training data')
@@ -197,6 +197,10 @@ class SegmentationModel(pl.LightningModule):
 
         # loss
         self.criterion = nn.BCEWithLogitsLoss()
+
+        self.nn = DummyVGSLModel(ptl_module=self)
+
+        self.save_hyperparameters()
 
     def forward(self, x):
         return self.net(x)
