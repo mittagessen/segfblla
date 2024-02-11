@@ -118,6 +118,7 @@ class SegmentationModel(pl.LightningModule):
             hyper_params_.update(hyper_params)
 
         self.hyper_params = hyper_params_
+        self.save_hyperparameters()
 
         if format_type in ['xml', 'page', 'alto']:
             logger.info(f'Parsing {len(training_data)} XML files for training data')
@@ -199,8 +200,6 @@ class SegmentationModel(pl.LightningModule):
         self.criterion = nn.BCEWithLogitsLoss()
 
         self.nn = DummyVGSLModel(ptl_module=self)
-
-        self.save_hyperparameters()
 
     def forward(self, x):
         return self.net(x)
