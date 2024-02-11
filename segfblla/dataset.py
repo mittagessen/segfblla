@@ -109,8 +109,8 @@ class BaselineSet(Dataset):
         self.line_width = line_width
         self.transforms = v2.Compose([v2.PILToTensor(),
                                       v2.ConvertDtype(torch.float32),
-                                      #v2.Normalize(mean=(0.485, 0.456, 0.406),
-                                      #             std=(0.229, 0.224, 0.225))
+                                      v2.Normalize(mean=(0.485, 0.456, 0.406),
+                                                   std=(0.229, 0.224, 0.225))
                                      ]
                                     )
         self.patch_crop = v2.RandomCrop((256, 256))
