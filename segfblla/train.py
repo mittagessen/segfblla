@@ -350,14 +350,14 @@ def segtrain(ctx, batch_size, output, line_width, pad, load, freq, quit,
     if len(model.train_set) == 0:
         raise click.UsageError('No valid training data was provided to the train command. Use `-t` or the `ground_truth` argument.')
 
-    trainer = Trainer(accelerator=accelerator,
-                      devices=device,
-                      precision=precision,
-                      max_epochs=hyper_params['epochs'] if hyper_params['quit'] == 'fixed' else -1,
-                      min_epochs=hyper_params['min_epochs'],
-                      enable_progress_bar=True if not ctx.meta['verbose'] else False,
-                      deterministic=ctx.meta['deterministic'],
-                      **val_check_interval)
+    trainer = KrakenTrainer(accelerator=accelerator,
+                            devices=device,
+                            precision=precision,
+                            max_epochs=hyper_params['epochs'] if hyper_params['quit'] == 'fixed' else -1,
+                            min_epochs=hyper_params['min_epochs'],
+                            enable_progress_bar=True if not ctx.meta['verbose'] else False,
+                            deterministic=ctx.meta['deterministic'],
+                            **val_check_interval)
 
     with threadpool_limits(limits=threads):
         trainer.fit(model)
