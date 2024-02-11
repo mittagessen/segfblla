@@ -28,7 +28,7 @@ import shapely.geometry as geom
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from shapely.ops import split, clip_by_rect
+from shapely.ops import split
 from skimage.draw import polygon
 from torch.utils.data import Dataset
 from torchvision import transforms
@@ -207,19 +207,14 @@ class BaselineSet(Dataset):
                 line = np.array(line)
                 shp_line = geom.LineString(line)
                 split_offset = min(5, shp_line.length/2)
-                line_pol = clip_by_rect(shp_line.buffer(self.line_width/2, cap_style=2), j, i, j+w, i+h)
-                # line outside of patch -> continue
-                if not line_pol:
-                    continue
+                line_pol = shp_line.buffer(self.line_width/2, cap_style=2)
+                # negative coords get ignored by skimage.draw.polygon
                 line_pol = np.array(line_pol.boundary.coords, dtype=int) - (j, i)
                 rr, cc = polygon(line_pol[:, 1], line_pol[:, 0], shape=image.shape[1:])
                 t[cls_idx, rr, cc] = 1
                 split_pt = shp_line.interpolate(split_offset).buffer(0.001)
                 # top
-                start_sep = clip_by_rect(split(shp_line,
-                                                split_pt).geoms[0].buffer(self.line_width,
-                                                                          cap_style=3),
-                                          j, i, j+w, i+h)
+                start_sep = split(shp_line, split_pt).geoms[0].buffer(self.line_width, cap_style=3)
                 # start_sep in image
                 if start_sep:
                     start_sep = np.array(start_sep.boundary.coords, dtype=int) - (j, i)
@@ -228,10 +223,7 @@ class BaselineSet(Dataset):
                     t[start_sep_cls, rr, cc] = 0
                 split_pt = shp_line.interpolate(-split_offset).buffer(0.001)
                 # top
-                end_sep = clip_by_rect(split(shp_line,
-                                                split_pt).geoms[-1].buffer(self.line_width,
-                                                                          cap_style=3),
-                                          j, i, j+w, i+h)
+                end_sep = split(shp_line, split_pt).geoms[-1].buffer(self.line_width, cap_style=3)
                 # end_sep in image
                 if end_sep:
                     end_sep = np.array(end_sep.boundary.coords, dtype=int) - (j, i)
@@ -245,11 +237,9 @@ class BaselineSet(Dataset):
                 # skip regions of classes not present in the training set
                 continue
             for region in regions:
-                region = clip_by_rect(geom.Polygon(region.boundary), j, i, j+w, i+h)
-                if region:
-                    region = np.array(region.boundary.coords, dtype=int) - (j, i)
-                    rr, cc = polygon(region[:, 1], region[:, 0], shape=image.shape[1:])
-                    t[cls_idx, rr, cc] = 1
+                region = np.array(region.boundary, dtype=int) - (j, i)
+                rr, cc = polygon(region[:, 1], region[:, 0], shape=image.shape[1:])
+                t[cls_idx, rr, cc] = 1
         target = t
         if self.aug:
             image = image.permute(1, 2, 0).numpy()
