@@ -198,8 +198,8 @@ class SegmentationModel(pl.LightningModule):
         self.val_set = val_set
 
         # loss
-        # self.criterion = nn.BCEWithLogitsLoss()
-        self.criterion = SymmetricUnifiedFocalLoss()
+        self.criterion = nn.BCEWithLogitsLoss()
+        #self.criterion = SymmetricUnifiedFocalLoss()
 
         self.nn = DummyVGSLModel(ptl_module=self)
 
