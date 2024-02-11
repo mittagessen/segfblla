@@ -384,6 +384,10 @@ class SegmentationModel(pl.LightningModule):
                           num_workers=self.num_workers,
                           pin_memory=True)
 
+
+    def save_checkpoint(self, filename):
+        self.trainer.save_checkpoint(filename)
+
     def configure_callbacks(self):
         callbacks = []
         if self.hparams.hyper_params['quit'] == 'early':
