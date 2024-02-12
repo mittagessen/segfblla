@@ -303,7 +303,7 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
                       min_epochs=hyper_params['min_epochs'],
                       enable_progress_bar=True if not ctx.meta['verbose'] else False,
                       deterministic=ctx.meta['deterministic'],
-                      callbacks=[KrakenTrainProgressBar()],
+                      callbacks=[KrakenTrainProgressBar(leave=True), RichModelSummary(max_depth=2)],
                       **val_check_interval)
 
     with threadpool_limits(limits=threads):

@@ -65,6 +65,8 @@ class SegmentationModel(pl.LightningModule):
         """
         super().__init__()
 
+        self.automatic_optimization = False
+
         self.best_epoch = -1
         self.best_metric = 0.0
         self.best_model = None
