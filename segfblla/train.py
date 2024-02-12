@@ -158,6 +158,10 @@ def _validate_merging(ctx, param, value):
               help='File(s) with paths to evaluation data. Overrides the `-p` parameter')
 @click.option('--workers', show_default=True, default=1, type=click.IntRange(1), help='Number of worker proesses.')
 @click.option('--threads', show_default=True, default=1, type=click.IntRange(1), help='Maximum size of OpenMP/BLAS thread pool.')
+@click.option('--suppress-regions/--no-suppress-regions', show_default=True,
+              default=False, help='Disables region segmentation training.')
+@click.option('--suppress-baselines/--no-suppress-baselines', show_default=True,
+              default=False, help='Disables baseline segmentation training.')
 @click.option('-vr', '--valid-regions', show_default=True, default=None, multiple=True,
               help='Valid region types in training data. May be used multiple times.')
 @click.option('-vb', '--valid-baselines', show_default=True, default=None, multiple=True,
@@ -192,9 +196,9 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
              epochs, min_epochs, lag, min_delta, device, precision, optimizer,
              lrate, momentum, weight_decay, warmup, schedule, gamma, step_size,
              sched_patience, cos_max, partition, training_files,
-             evaluation_files, workers, threads, valid_regions,
-             valid_baselines, merge_regions, merge_baselines, augment, topline,
-             ground_truth):
+             evaluation_files, workers, threads, suppress_regions,
+             suppress_baselines, valid_regions, valid_baselines, merge_regions,
+             merge_baselines, augment, topline, ground_truth):
     """
     Trains a baseline labeling model for layout analysis
     """
@@ -270,6 +274,18 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
         val_check_interval = {'check_val_every_n_epoch': int(hyper_params['freq'])}
     else:
         val_check_interval = {'val_check_interval': hyper_params['freq']}
+
+    if not valid_regions:
+        valid_regions = None
+    if not valid_baselines:
+        valid_baselines = None
+
+    if suppress_regions:
+        valid_regions = []
+        merge_regions = None
+    if suppress_baselines:
+        valid_baselines = []
+        merge_baselines = None
 
     message('Initializing dataset.')
     data_module = BaselineDataModule(train_files=ground_truth,
