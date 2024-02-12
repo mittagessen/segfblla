@@ -144,8 +144,14 @@ class BaselineDataModule(pl.LightningDataModule):
                           batch_size=self.hparams.batch_size,
                           num_workers=self.hparams.num_workers)
 
-    def on_save_checkpoint(checkpoint):
-        checkpoint['class_mapping'] = self.class_mapping
+
+    def state_dict(self):
+        # track whatever you want here
+        return {"class_mapping": self.class_mapping}
+
+    def load_state_dict(self, state_dict):
+        # restore the state based on what you tracked in (def state_dict)
+        self.class_mapping = state_dict['class_mapping']
 
 
 class BaselineSet(Dataset):

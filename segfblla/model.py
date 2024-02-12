@@ -74,7 +74,6 @@ class SegmentationModel(pl.LightningModule):
         if hyper_params:
             hyper_params_.update(hyper_params)
 
-        self.hyper_params = hyper_params_
         self.save_hyperparameters()
 
         # set multiprocessing tensor sharing strategy

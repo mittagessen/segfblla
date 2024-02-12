@@ -69,7 +69,7 @@ def _validate_merging(ctx, param, value):
               show_default=True,
               default=SEGMENTATION_HYPER_PARAMS['line_width'],
               help='The height of each baseline in the target after scaling')
-@click.option('--patch-size', show_default=True, default=SEGMENTATION_HYPER_PARAMS['patch_size'], type=(click.FLOAT, click.FLOAT))
+@click.option('--patch-size', show_default=True, default=SEGMENTATION_HYPER_PARAMS['patch_size'], type=(click.INT, click.INT))
 @click.option('-F', '--freq', show_default=True, default=SEGMENTATION_HYPER_PARAMS['freq'], type=click.FLOAT,
               help='Model saving and report generation frequency in epochs '
                    'during training. If frequency is >1 it must be an integer, '
@@ -99,12 +99,6 @@ def _validate_merging(ctx, param, value):
               default=SEGMENTATION_HYPER_PARAMS['min_delta'],
               type=click.FLOAT,
               help='Minimum improvement between epochs to reset early stopping. By default it scales the delta by the best loss')
-@click.option('-d', '--device', show_default=True, default='cpu', help='Select device to use (cpu, cuda:0, cuda:1, ...)')
-@click.option('--precision',
-              show_default=True,
-              default='16',
-              type=click.Choice(['64', '32', 'bf16', '16']),
-              help='Numerical precision to use for training. Default is 32-bit single-point precision.')
 @click.option('--optimizer',
               show_default=True,
               default=SEGMENTATION_HYPER_PARAMS['optimizer'],
@@ -193,7 +187,7 @@ def _validate_merging(ctx, param, value):
 @click.option('-bl', '--baseline', 'topline', flag_value='baseline', default='baseline')
 @click.argument('ground_truth', nargs=-1, callback=_expand_gt, type=click.Path(exists=False, dir_okay=False))
 def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
-             epochs, min_epochs, lag, min_delta, device, precision, optimizer,
+             epochs, min_epochs, lag, min_delta, optimizer,
              lrate, momentum, weight_decay, warmup, schedule, gamma, step_size,
              sched_patience, cos_max, partition, training_files,
              evaluation_files, workers, threads, suppress_regions,
@@ -266,7 +260,7 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
     topline = loc[topline]
 
     try:
-        accelerator, device = to_ptl_device(device)
+        accelerator, device = to_ptl_device(ctx.meta['device'])
     except Exception as e:
         raise click.BadOptionUsage('device', str(e))
 
@@ -299,7 +293,7 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
                                      merge_regions=merge_regions,
                                      batch_size=batch_size,
                                      num_workers=workers,
-                                     topline=loc,
+                                     topline=topline,
                                      patch_size=patch_size)
 
     message('Initializing model.')
@@ -323,7 +317,7 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
 
     trainer = Trainer(accelerator=accelerator,
                       devices=device,
-                      precision=precision,
+                      precision=ctx.meta['precision'],
                       max_epochs=hyper_params['epochs'] if hyper_params['quit'] == 'fixed' else -1,
                       min_epochs=hyper_params['min_epochs'],
                       enable_progress_bar=True if not ctx.meta['verbose'] else False,
