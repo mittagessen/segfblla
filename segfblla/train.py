@@ -301,6 +301,10 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
     if len(data_module.bl_train) == 0:
         raise click.UsageError('No valid training data was provided to the train command. Use `-t` or the `ground_truth` argument.')
 
+    cbs = [RichModelSummary(max_depth=2)]
+    if not ctx.meta['verbose']:
+        cbs.append(KrakenTrainProgressBar(leave=True))
+
     trainer = Trainer(accelerator=accelerator,
                       devices=device,
                       precision=precision,
@@ -308,7 +312,8 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
                       min_epochs=hyper_params['min_epochs'],
                       enable_progress_bar=True if not ctx.meta['verbose'] else False,
                       deterministic=ctx.meta['deterministic'],
-                      callbacks=[KrakenTrainProgressBar(leave=True), RichModelSummary(max_depth=2)],
+                      enable_model_summary=False,
+                      callbacks=cbs,
                       **val_check_interval)
 
     with threadpool_limits(limits=threads):
