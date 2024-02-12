@@ -271,6 +271,7 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
     else:
         val_check_interval = {'val_check_interval': hyper_params['freq']}
 
+    message('Initializing dataset.')
     data_module = BaselineDataModule(train_files=ground_truth,
                                      val_files=evaluation_files,
                                      line_width=line_width,
@@ -283,6 +284,7 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
                                      topline=loc,
                                      patch_size=patch_size)
 
+    message('Initializing model.')
     model = SegmentationModel(hyper_params=hyper_params,
                               num_classes=data_module.num_classes,
                               batches_per_epoch=len(data_module.train_dataloader()))
