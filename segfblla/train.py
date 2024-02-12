@@ -69,8 +69,7 @@ def _validate_merging(ctx, param, value):
               show_default=True,
               default=SEGMENTATION_HYPER_PARAMS['line_width'],
               help='The height of each baseline in the target after scaling')
-@click.option('-i', '--load', show_default=True, type=click.Path(exists=True,
-              readable=True), help='Load existing file to continue training')
+@click.option('--patch-size', show_default=True, default=SEGMENTATION_HYPER_PARAMS['patch_size'], type=(click.FLOAT, click.FLOAT))
 @click.option('-F', '--freq', show_default=True, default=SEGMENTATION_HYPER_PARAMS['freq'], type=click.FLOAT,
               help='Model saving and report generation frequency in epochs '
                    'during training. If frequency is >1 it must be an integer, '
@@ -159,22 +158,6 @@ def _validate_merging(ctx, param, value):
               help='File(s) with paths to evaluation data. Overrides the `-p` parameter')
 @click.option('--workers', show_default=True, default=1, type=click.IntRange(1), help='Number of worker proesses.')
 @click.option('--threads', show_default=True, default=1, type=click.IntRange(1), help='Maximum size of OpenMP/BLAS thread pool.')
-@click.option('--load-hyper-parameters/--no-load-hyper-parameters', show_default=True, default=False,
-              help='When loading an existing model, retrieve hyper-parameters from the model')
-@click.option('--force-binarization/--no-binarization', show_default=True,
-              default=False, help='Forces input images to be binary, otherwise '
-              'the appropriate color format will be auto-determined through the '
-              'network specification. Will be ignored in `path` mode.')
-@click.option('-f', '--format-type', type=click.Choice(['path', 'xml', 'alto', 'page']), default='xml',
-              help='Sets the training data format. In ALTO and PageXML mode all '
-              'data is extracted from xml files containing both baselines and a '
-              'link to source images. In `path` mode arguments are image files '
-              'sharing a prefix up to the last extension with JSON `.path` files '
-              'containing the baseline information.')
-@click.option('--suppress-regions/--no-suppress-regions', show_default=True,
-              default=False, help='Disables region segmentation training.')
-@click.option('--suppress-baselines/--no-suppress-baselines', show_default=True,
-              default=False, help='Disables baseline segmentation training.')
 @click.option('-vr', '--valid-regions', show_default=True, default=None, multiple=True,
               help='Valid region types in training data. May be used multiple times.')
 @click.option('-vb', '--valid-baselines', show_default=True, default=None, multiple=True,
@@ -193,22 +176,10 @@ def _validate_merging(ctx, param, value):
               help='Baseline type merge mapping. Same syntax as `--merge-regions`',
               multiple=True,
               callback=_validate_merging)
-@click.option('-br', '--bounding-regions', show_default=True, default=None, multiple=True,
-              help='Regions treated as boundaries for polygonization purposes. May be used multiple times.')
 @click.option('--augment/--no-augment',
               show_default=True,
               default=SEGMENTATION_HYPER_PARAMS['augment'],
               help='Enable image augmentation')
-@click.option('--resize', show_default=True, default='fail',
-              type=click.Choice([
-                  'add', 'union',  # Deprecation: `add` is deprecated, `union` is the new value
-                  'both', 'new',  # Deprecation: `both` is deprecated, `new` is the new value
-                  'fail'
-              ]),
-              help='Output layer resizing option. If set to `add` new classes will be '
-                   'added, `both` will set the layer to match exactly '
-                   'the training data classes, `fail` will abort if training data and model '
-                   'classes do not match.')
 @click.option('-tl', '--topline', 'topline', show_default=True, flag_value='topline',
               help='Switch for the baseline location in the scripts. '
                    'Set to topline if the data is annotated with a hanging baseline, as is '
@@ -216,20 +187,14 @@ def _validate_merging(ctx, param, value):
                    ' centerline for scripts annotated with a central line.')
 @click.option('-cl', '--centerline', 'topline', flag_value='centerline')
 @click.option('-bl', '--baseline', 'topline', flag_value='baseline', default='baseline')
-@click.option('--logger', 'pl_logger', show_default=True, type=click.Choice(['tensorboard']), default=None,
-              help='Logger used by PyTorch Lightning to track metrics such as loss and accuracy.')
-@click.option('--log-dir', show_default=True, type=click.Path(exists=True, dir_okay=True, writable=True),
-              help='Path to directory where the logger will store the logs. If not set, a directory will be created in the current working directory.')
 @click.argument('ground_truth', nargs=-1, callback=_expand_gt, type=click.Path(exists=False, dir_okay=False))
-def segtrain(ctx, batch_size, output, line_width, load, freq, quit,
+def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
              epochs, min_epochs, lag, min_delta, device, precision, optimizer,
              lrate, momentum, weight_decay, warmup, schedule, gamma, step_size,
              sched_patience, cos_max, partition, training_files,
-             evaluation_files, workers, threads, load_hyper_parameters,
-             force_binarization, format_type, suppress_regions,
-             suppress_baselines, valid_regions, valid_baselines, merge_regions,
-             merge_baselines, bounding_regions, augment, resize, topline,
-             pl_logger, log_dir, ground_truth):
+             evaluation_files, workers, threads, valid_regions,
+             valid_baselines, merge_regions, merge_baselines, augment, topline,
+             ground_truth):
     """
     Trains a baseline labeling model for layout analysis
     """
@@ -237,14 +202,11 @@ def segtrain(ctx, batch_size, output, line_width, load, freq, quit,
 
     from threadpoolctl import threadpool_limits
 
-    from kraken.lib.train import KrakenTrainer
+    from kraken.lib.progress import KrakenTrainProgressBar
+    from segfblla.dataset import BaselineDataModule
     from segfblla.model import SegmentationModel
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.callbacks import ModelCheckpoint
-
-    if resize != 'fail' and not load:
-        raise click.BadOptionUsage('resize', 'resize option requires loading an existing model')
 
     if not (0 <= freq <= 1) and freq % 1.0 != 0:
         raise click.BadOptionUsage('freq', 'freq needs to be either in the interval [0,1.0] or a positive integer.')
@@ -254,15 +216,6 @@ def segtrain(ctx, batch_size, output, line_width, load, freq, quit,
             import albumentations  # NOQA
         except ImportError:
             raise click.BadOptionUsage('augment', 'augmentation needs the `albumentations` package installed.')
-
-    if pl_logger == 'tensorboard':
-        try:
-            import tensorboard  # NOQA
-        except ImportError:
-            raise click.BadOptionUsage('logger', 'tensorboard logger needs the `tensorboard` package installed.')
-
-    if log_dir is None:
-        log_dir = pathlib.Path.cwd()
 
     logger.info('Building ground truth set from {} document images'.format(len(ground_truth) + len(training_files)))
 
@@ -282,11 +235,11 @@ def segtrain(ctx, batch_size, output, line_width, load, freq, quit,
                          'weight_decay': weight_decay,
                          'warmup': warmup,
                          'schedule': schedule,
-                         'augment': augment,
                          'gamma': gamma,
                          'step_size': step_size,
                          'rop_patience': sched_patience,
                          'cos_t_max': cos_max,
+                         'patch_size': patch_size
                          })
 
     # disable automatic partition when given evaluation set explicitly
@@ -317,47 +270,44 @@ def segtrain(ctx, batch_size, output, line_width, load, freq, quit,
     else:
         val_check_interval = {'val_check_interval': hyper_params['freq']}
 
-    model = SegmentationModel(hyper_params,
-                              output=output,
-                              model=load,
-                              training_data=ground_truth,
-                              evaluation_data=evaluation_files,
-                              partition=partition,
-                              num_workers=workers,
-                              load_hyper_parameters=load_hyper_parameters,
-                              force_binarization=force_binarization,
-                              format_type=format_type,
-                              suppress_regions=suppress_regions,
-                              suppress_baselines=suppress_baselines,
-                              valid_regions=valid_regions,
-                              valid_baselines=valid_baselines,
-                              merge_regions=merge_regions,
-                              merge_baselines=merge_baselines,
-                              bounding_regions=bounding_regions,
-                              resize=resize,
-                              topline=topline)
+    data_module = BaselineDataModule(train_files=ground_truth,
+                                     val_files=evaluation_files,
+                                     line_width=line_width,
+                                     augmentation=augment,
+                                     partition=partition,
+                                     valid_baselines=valid_baselines,
+                                     merge_baselines=merge_baselines,
+                                     batch_size=batch_size,
+                                     num_workers=workers,
+                                     topline=loc,
+                                     patch_size=patch_size)
+
+    model = SegmentationModel(hyper_params=hyper_params,
+                              num_classes=data_module.num_classes,
+                              batches_per_epoch=len(data_module.train_dataloader()))
 
     message('Training line types:')
-    for k, v in model.train_set.dataset.class_mapping['baselines'].items():
-        message(f'  {k}\t{v}\t{model.train_set.dataset.class_stats["baselines"][k]}')
+    for k, v in data_module.class_mapping['baselines'].items():
+        message(f'  {k}\t{v}\t{data_module.train_class_stats["baselines"][k]}')
     message('Training region types:')
-    for k, v in model.train_set.dataset.class_mapping['regions'].items():
-        message(f'  {k}\t{v}\t{model.train_set.dataset.class_stats["regions"][k]}')
+    for k, v in data_module.class_mapping['regions'].items():
+        message(f'  {k}\t{v}\t{data_module.train_class_stats["regions"][k]}')
 
-    if len(model.train_set) == 0:
+    if len(data_module.bl_train) == 0:
         raise click.UsageError('No valid training data was provided to the train command. Use `-t` or the `ground_truth` argument.')
 
-    trainer = KrakenTrainer(accelerator=accelerator,
-                            devices=device,
-                            precision=precision,
-                            max_epochs=hyper_params['epochs'] if hyper_params['quit'] == 'fixed' else -1,
-                            min_epochs=hyper_params['min_epochs'],
-                            enable_progress_bar=True if not ctx.meta['verbose'] else False,
-                            deterministic=ctx.meta['deterministic'],
-                            **val_check_interval)
+    trainer = Trainer(accelerator=accelerator,
+                      devices=device,
+                      precision=precision,
+                      max_epochs=hyper_params['epochs'] if hyper_params['quit'] == 'fixed' else -1,
+                      min_epochs=hyper_params['min_epochs'],
+                      enable_progress_bar=True if not ctx.meta['verbose'] else False,
+                      deterministic=ctx.meta['deterministic'],
+                      callbacks=[KrakenTrainProgressBar()],
+                      **val_check_interval)
 
     with threadpool_limits(limits=threads):
-        trainer.fit(model)
+        trainer.fit(model, data_module)
 
     if model.best_epoch == -1:
         logger.warning('Model did not improve during training.')
@@ -366,8 +316,3 @@ def segtrain(ctx, batch_size, output, line_width, load, freq, quit,
     if not model.current_epoch:
         logger.warning('Training aborted before end of first epoch.')
         ctx.exit(1)
-
-    if quit == 'early':
-        message(f'Moving best model {model.best_model} ({model.best_metric}) to {output}_best.mlmodel')
-        logger.info(f'Moving best model {model.best_model} ({model.best_metric}) to {output}_best.mlmodel')
-        shutil.copy(f'{model.best_model}', f'{output}_best.mlmodel')

@@ -18,32 +18,134 @@ Utility functions for data loading and training of VGSL networks.
 import traceback
 from collections import defaultdict
 from itertools import groupby
-from typing import TYPE_CHECKING, Any, Callable, Dict, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Sequence, Tuple, Union, Optional
 
 import cv2
 cv2.setNumThreads(0)
 
 import numpy as np
+import pytorch_lightning as pl
 import shapely.geometry as geom
 import torch
 import torch.nn.functional as F
+import albumentations as A
+
 from PIL import Image
 from shapely.ops import split
 from skimage.draw import polygon
 from torch.utils.data import Dataset
 from torchvision import transforms
-import albumentations as A
+from torch.utils.data import DataLoader, Subset, random_split
 from torchvision.transforms import v2
+
+from kraken.lib.xml import XMLPage
 
 if TYPE_CHECKING:
     from kraken.containers import Segmentation
-
+    from os import PathLike
 
 __all__ = ['BaselineSet']
 
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class BaselineDataModule(pl.LightningDataModule):
+    def __init__(self,
+                 train_files: Sequence[Union[str, 'PathLike']],
+                 val_files: Optional[Sequence[Union[str, 'PathLike']]] = None,
+                 line_width: int = 4,
+                 augmentation: bool = False,
+                 valid_baselines: Sequence[str] = None,
+                 merge_baselines: Dict[str, Sequence[str]] = None,
+                 valid_regions: Sequence[str] = None,
+                 merge_regions: Dict[str, Sequence[str]] = None,
+                 batch_size: int = 16,
+                 num_workers: int = 8,
+                 partition: Optional[float] = 0.95,
+                 topline: Union[bool, None] = False,
+                 patch_size: Tuple[int, int] = (512, 512)):
+        super().__init__()
+
+        self.save_hyperparameters()
+
+
+        logger.info(f'Parsing {len(train_files)} XML files for training data')
+        train_data = [XMLPage(file).to_container() for file in self.hparams.train_files]
+
+        val_data = None
+
+        if val_files:
+            logger.info(f'Parsing {len(val_files)} XML files for validation data')
+            val_data = [XMLPage(file).to_container() for file in self.hparams.val_files]
+
+        if not train_data:
+            raise ValueError('No training data provided. Please add some.')
+
+        train_set = BaselineSet(line_width=self.hparams.line_width,
+                                augmentation=self.hparams.augmentation,
+                                valid_baselines=self.hparams.valid_baselines,
+                                merge_baselines=self.hparams.merge_baselines,
+                                valid_regions=self.hparams.valid_regions,
+                                merge_regions=self.hparams.merge_regions)
+
+        for page in train_data:
+            train_set.add(page)
+
+        if val_data:
+            val_set = BaselineSet(line_width=self.hparams.line_width,
+                                  augmentation=False,
+                                  valid_baselines=self.hparams.valid_baselines,
+                                  merge_baselines=self.hparams.merge_baselines,
+                                  valid_regions=self.hparams.valid_regions,
+                                  merge_regions=self.hparams.merge_regions)
+
+            for page in val_data:
+                val_set.add(page)
+
+            train_set = Subset(train_set, range(len(train_set)))
+            val_set = Subset(val_set, range(len(val_set)))
+        else:
+            train_len = int(len(train_set)*self.hparams.partition)
+            val_len = len(train_set) - train_len
+            logger.info(f'No explicit validation data provided. Splitting off '
+                        f'{val_len} (of {len(train_set)}) samples to validation '
+                        'set.')
+            train_set, val_set = random_split(train_set, (train_len, val_len))
+
+        if len(train_set) == 0:
+            raise ValueError('No valid training data provided. Please add some.')
+
+        if len(val_set) == 0:
+            raise ValueError('No valid validation data provided. Please add some.')
+
+        # overwrite class mapping in validation set
+        val_set.dataset.num_classes = train_set.dataset.num_classes
+        val_set.dataset.class_mapping = train_set.dataset.class_mapping
+
+        self.num_classes = train_set.dataset.num_classes
+        self.class_mapping = train_set.dataset.class_mapping
+        self.train_class_stats = train_set.dataset.class_stats
+        self.val_class_stats = val_set.dataset.class_stats
+
+        self.bl_train = train_set
+        self.bl_val = val_set
+
+        self.save_hyperparameters()
+
+    def train_dataloader(self):
+        return DataLoader(self.bl_train,
+                          batch_size=self.hparams.batch_size,
+                          num_workers=self.hparams.num_workers)
+
+    def val_dataloader(self):
+        return DataLoader(self.bl_val,
+                          batch_size=self.hparams.batch_size,
+                          num_workers=self.hparams.num_workers)
+
+    def on_save_checkpoint(checkpoint):
+        checkpoint['class_mapping'] = self.class_mapping
 
 
 class BaselineSet(Dataset):
