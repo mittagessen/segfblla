@@ -1,5 +1,5 @@
 #
-# Copyright 2015 Benjamin Kiessling
+# Copyright 2024 Benjamin Kiessling
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,244 +18,165 @@ segfblla.pred
 
 Command line drivers for recognition inference.
 """
-import dataclasses
-import logging
-import os
-import shlex
+import torch
 import warnings
+from os import PathLike
 from functools import partial
 from pathlib import Path
-from typing import IO, Any, Callable, Dict, List, Union, cast
+from typing import IO, Any, Callable, Dict, List, Union, Tuple
 
-import click
-import importlib_resources
-from PIL import Image
-from rich.traceback import install
+from transformers import SegformerConfig, SegformerForSemanticSegmentation
 
-from kraken.lib import log
+from kraken.blla import vec_regions, vec_lines
+from kraken.lib.segmentation import polygonal_reading_order
 
-warnings.simplefilter('ignore', UserWarning)
-
-logging.captureWarnings(True)
-logger = logging.getLogger('kraken')
-
-# install rich traceback handler
-install(suppress=[click])
-
-APP_NAME = 'kraken'
-SEGMENTATION_DEFAULT_MODEL = importlib_resources.files(APP_NAME).joinpath('blla.mlmodel')
-DEFAULT_MODEL = ['en_best.mlmodel']
-
-# raise default max image size to 20k * 20k pixels
-Image.MAX_IMAGE_PIXELS = 20000 ** 2
-
-
-def message(msg: str, **styles) -> None:
-    if logger.getEffectiveLevel() >= 30:
-        click.secho(msg, **styles)
-
-
-def get_input_parser(type_str: str) -> Callable[[str], Dict[str, Any]]:
-    if type_str in ['alto', 'page', 'xml']:
-        from kraken.lib.xml import XMLPage
-        return XMLPage
-    elif type_str == 'image':
-        return Image.open
-
-
-def segmenter(legacy, model, text_direction, scale, maxcolseps, black_colseps,
-              remove_hlines, pad, mask, device, input, output) -> None:
-
-@click.command('pred')
-@click.pass_context
-@click.version_option()
-@click.option('-i', '--input',
-              type=(click.Path(exists=True, dir_okay=False, path_type=Path),  # type: ignore
-                    click.Path(writable=True, dir_okay=False, path_type=Path)),
-              multiple=True,
-              help='Input-output file pairs. Each input file (first argument) is mapped to one '
-                   'output file (second argument), e.g. `-i input.png output.txt`')
-@click.option('-I', '--batch-input', multiple=True, help='Glob expression to add multiple files at once.')
-@click.option('-o', '--suffix', default='', show_default=True,
-              help='Suffix for output files from batch and PDF inputs.')
-@click.option('-f', '--format-type', type=click.Choice(['image', 'alto', 'page', 'pdf', 'xml']), default='image',
-              help='Sets the default input type. In image mode inputs are image '
-                   'files, alto/page expects XML files in the respective format, pdf '
-                   'expects PDF files with numbered suffixes added to output file '
-                   'names as needed.')
-@click.option('-p', '--pdf-format', default='{src}_{idx:06d}',
-              show_default=True,
-              help='Format for output of PDF files. valid fields '
-                   'are `src` (source file), `idx` (page number), and `uuid` (v4 uuid). '
-                   '`-o` suffixes are appended to this format string.')
-@click.option('-h', '--hocr', 'serializer',
-              help='Switch between hOCR, ALTO, abbyyXML, PageXML or "native" '
-              'output. Native are plain image files for image, JSON for '
-              'segmentation, and text for transcription output.',
-              flag_value='hocr')
-@click.option('-a', '--alto', 'serializer', flag_value='alto')
-@click.option('-y', '--abbyy', 'serializer', flag_value='abbyyxml')
-@click.option('-x', '--pagexml', 'serializer', flag_value='pagexml')
-@click.option('-n', '--native', 'serializer', flag_value='native', default=True,
-              show_default=True)
-@click.option('-t', '--template', type=click.Path(exists=True, dir_okay=False),
-              help='Explicitly set jinja template for output serialization. Overrides -h/-a/-y/-x/-n.')
-@click.option('-d', '--device', default='cpu', show_default=True,
-              help='Select device to use (cpu, cuda:0, cuda:1, ...)')
-@click.option('-r', '--raise-on-error/--no-raise-on-error', default=False, show_default=True,
-              help='Raises the exception that caused processing to fail in the case of an error')
-@click.option('--threads', default=1, show_default=True, type=click.IntRange(1),
-              help='Size of thread pools for intra-op parallelization')
-@click.option('-m', '--model', default=None, show_default=True,
-              help='Baseline detection model to use')
-@click.option('-d', '--text-direction', default='horizontal-lr',
-              show_default=True,
-              type=click.Choice(['horizontal-lr', 'horizontal-rl',
-                                 'vertical-lr', 'vertical-rl']),
-              help='Sets principal text direction')
-def pred(input, batch_input, suffix, format_type, pdf_format,
-         serializer, template, device, raise_on_error, threads,
-         model, text_direction):
+def load_model_checkpoint(filename: PathLike, device: torch.device) -> torch.nn.Module:
     """
-    Segmentation inference with SegFormer models.
-
-    Inputs are defined as one or more pairs `-i input_file output_file`
-    followed by one or more chainable processing commands. Likewise, verbosity
-    is set on all subcommands with the `-v` switch.
+    Instantiates a pure torch nn.Module from a lightning checkpoint and returns
+    the class mapping.
     """
-    import glob
-    import tempfile
-    import uuid
+    lm = torch.load(location, map_location=device)
+    model_weights = lm['state_dict']
+    class_mapping = lm['BaselineDataModule']['class_mapping']
+    config = SegformerConfig.from_dict(lm['model_config'])
+    net = SegformerForSemanticSegmentation(config)
+    for key in list(model_weights):
+        model_weights[key.replace("net.", "")] = model_weights.pop(key)
+    net.load_state_dict(model_weights)
+    net.class_mapping = lm['BaselineDataModule']['class_mapping']
+    net.topline = lm['BaselineDataModule']['hyper_parameters']['topline']
+    return net
 
-    from threadpoolctl import threadpool_limits
 
-    from kraken.lib.progress import KrakenProgressBar
+def compute_segmentation_map(im: PIL.Image.Image,
+                             model: nn.Module = None,
+                             device: torch.device = torch.device('cpu'),
+                             autocast: bool = True) -> Dict[str, Any]:
+    """
+    Args:
+        im: Input image
+        model: A TorchVGSLModel containing a segmentation model.
+        device: The target device to run the neural network on.
+        autocast: Runs the model with automatic mixed precision
 
-    if device != 'cpu':
-        import torch
-        try:
-            torch.ones(1, device=device)
-        except AssertionError as e:
-            if raise_on_error:
-                raise
-            logger.error(f'Device {device} not available: {e.args[0]}.')
-            ctx.exit(1)
-    input_format_type = format_type if format_type != 'pdf' else 'image'
-    raise_failed = raise_on_error
-    if not template:
-        output_mode = serializer
-        output_template = serializer
+    Returns:
+        A dictionary containing the heatmaps ('heatmap', torch.Tensor), class
+        map ('cls_map', Dict[str, Dict[str, int]]), the bounding regions for
+        polygonization purposes ('bounding_regions', List[str]), the scale
+        between the input image and the network output ('scale', float), and
+        the scaled input image to the network ('scal_im', PIL.Image.Image).
+    """
+    model.eval()
+    model.to(device)
+
+    tensor_im = transforms(im)
+    with torch.autocast(device_type=device.split(":")[0], enabled=autocast):
+        with torch.no_grad():
+            logger.debug('Running network forward pass')
+            o, _ = model.nn(tensor_im.to(device))
+    logger.debug('Reassembling patches')
+
+    logger.debug('Upsampling network output')
+    o = F.interpolate(o, size=im.shape)
+    o = o.squeeze().cpu().float().numpy()
+    scale = np.divide(im.size, o.shape[:0:-1])
+
+    return {'heatmap': o,
+            'cls_map': model.class_mapping,
+            'bounding_regions': None,
+            'scale': scale,
+            'scal_im': scal_im}
+
+
+def segment(im: PIL.Image.Image,
+            text_direction: Literal['horizontal-lr', 'horizontal-rl', 'vertical-lr', 'vertical-rl'] = 'horizontal-lr',
+            reading_order_fn: Callable = polygonal_reading_order,
+            model: nn.Module = None,
+            device: torch.device = torch.device('cpu'),
+            raise_on_error: bool = False,
+            autocast: bool = True) -> Segmentation:
+    r"""
+    Segments a page into text lines using the baseline segmenter.
+
+    Segments a page into text lines and returns the polyline formed by each
+    baseline and their estimated environment.
+
+    Args:
+        im: Input image. The mode can generally be anything but it is possible
+            to supply a binarized-input-only model which requires accordingly
+            treated images.
+        text_direction: Passed-through value for serialization.serialize.
+        reading_order_fn: Function to determine the reading order.  Has to
+                          accept a list of tuples (baselines, polygon) and a
+                          text direction (`lr` or `rl`).
+        model: One or more TorchVGSLModel containing a segmentation model. If
+               none is given a default model will be loaded.
+        device: The target device to run the neural network on.
+        raise_on_error: Raises error instead of logging them when they are
+                        not-blocking
+        precision: Runs the model with automatic mixed precision
+
+    Returns:
+        A :class:`kraken.containers.Segmentation` class containing reading
+        order sorted baselines (polylines) and their respective polygonal
+        boundaries as :class:`kraken.containers.BaselineLine` records. The last
+        and first point of each boundary polygon are connected.
+    """
+    loc = {None: 'center',
+           True: 'top',
+           False: 'bottom'}[model.topline]
+    logger.debug(f'Baseline location: {loc}')
+
+    lines = []
+    order = None
+
+    rets = compute_segmentation_map(im, mask, model, device, autocast=autocast)
+    regions = vec_regions(**rets)
+
+    # flatten regions for line ordering
+    line_regs = []
+    for cls, regs in regions.items():
+        line_regs.extend(regs)
+
+    # convert back to net scale
+    line_regs = scale_regions([x.boundary for x in line_regs], 1/rets['scale'])
+
+    lines = vec_lines(**rets,
+                      regions=line_regs,
+                      text_direction=text_direction,
+                      topline=model.topline,
+                      raise_on_error=raise_on_error)
+
+    if len(rets['cls_map']['baselines']) > 1:
+        script_detection = True
     else:
-        output_mode = 'template'
-        output_template = template
+        script_detection = False
 
-    message(f'Loading model {model}\t', nl=False)
-    try:
-        model = TorchVGSLModel.load_model(location)
-        model.to(ctx.meta['device'])
-    except Exception:
-        if ctx.meta['raise_failed']:
-            raise
-        message('\u2717', fg='red')
-        ctx.exit(1)
+    # create objects and assign IDs
+    blls = []
+    _shp_regs = {}
+    for reg_type, rgs in regions.items():
+        for reg in rgs:
+            _shp_regs[reg.id] = geom.Polygon(reg.boundary)
 
-    message('\u2713', fg='green')
+    # reorder lines
+    logger.debug(f'Reordering baselines with main RO function {reading_order_fn}.')
+    basic_lo = reading_order_fn(lines=lines, regions=_shp_regs.values(), text_direction=text_direction[-2:])
+    lines = [lines[idx] for idx in basic_lo]
 
-    ctx.meta['steps'].append({'category': 'processing',
-                              'description': 'Baseline and region segmentation',
-                              'settings': {'model': os.path.basename(model),
-                                           'text_direction': text_direction}})
+    for line in lines:
+        line_regs = []
+        for reg_id, reg in _shp_regs.items():
+            line_ls = geom.LineString(line['baseline'])
+            if is_in_region(line_ls, reg):
+                line_regs.append(reg_id)
+        blls.append(BaselineLine(id=str(uuid.uuid4()), baseline=line['baseline'], boundary=line['boundary'], tags=line['tags'], regions=line_regs))
 
-    input = list(input)
-    # expand batch inputs
-    if batch_input and suffix:
-        for batch_expr in batch_input:
-            for in_file in glob.glob(batch_expr, recursive=True):
-                input.append((in_file, '{}{}'.format(os.path.splitext(in_file)[0], suffix)))
+    return Segmentation(text_direction=text_direction,
+                        imagename=getattr(im, 'filename', None),
+                        type='baselines',
+                        lines=blls,
+                        regions=regions,
+                        script_detection=script_detection,
+                        line_orders=[])
 
-    # parse pdfs
-    if format_type == 'pdf':
-        import pyvips
-
-        if not batch_input:
-            logger.warning('PDF inputs not added with batch option. Manual output filename will be ignored and `-o` utilized.')
-        new_input = []
-        num_pages = 0
-        for (fpath, _) in input:
-            doc = pyvips.Image.new_from_file(fpath, dpi=300, n=-1, access="sequential")
-            if 'n-pages' in doc.get_fields():
-                num_pages += doc.get('n-pages')
-
-        with KrakenProgressBar() as progress:
-            pdf_parse_task = progress.add_task('Extracting PDF pages', total=num_pages, visible=True if not ctx.meta['verbose'] else False)
-            for (fpath, _) in input:
-                try:
-                    doc = pyvips.Image.new_from_file(fpath, dpi=300, n=-1, access="sequential")
-                    if 'n-pages' not in doc.get_fields():
-                        logger.warning('{fpath} does not contain pages. Skipping.')
-                        continue
-                    n_pages = doc.get('n-pages')
-
-                    dest_dict = {'idx': -1, 'src': fpath, 'uuid': None}
-                    for i in range(0, n_pages):
-                        dest_dict['idx'] += 1
-                        dest_dict['uuid'] = str(uuid.uuid4())
-                        fd, filename = tempfile.mkstemp(suffix='.png')
-                        os.close(fd)
-                        doc = pyvips.Image.new_from_file(fpath, dpi=300, page=i, access="sequential")
-                        logger.info(f'Saving temporary image {fpath}:{dest_dict["idx"]} to {filename}')
-                        doc.write_to_file(filename)
-                        new_input.append((filename, pdf_format.format(**dest_dict) + suffix))
-                        progress.update(pdf_parse_task, advance=1)
-                except pyvips.error.Error:
-                    num_pages -= n_pages
-                    progress.update(pdf_parse_task, total=num_pages)
-                    logger.warning(f'{fpath} is not a PDF file. Skipping.')
-        input = new_input
-        ctx.meta['steps'].insert(0, {'category': 'preprocessing', 'description': 'PDF image extraction', 'settings': {}})
-
-    for io_pair in input:
-        try:
-            with threadpool_limits(limits=threads):
-                _segment(input=input, output=output)
-        except Exception as e:
-            logger.error(f'Failed processing {io_pair[0]}: {str(e)}')
-            if raise_failed:
-                raise
-
-    def _segment(input, output):
-        if input_format_type != 'image':
-            input = get_input_parser(input_format_type)(input).imagename
-
-        try:
-            im = Image.open(input)
-        except IOError as e:
-            raise click.BadParameter(str(e))
-        message('Segmenting\t', nl=False)
-        try:
-            res = blla.segment(im, text_direction, mask=mask, model=model, device=device,
-                               raise_on_error=raise_failed, autocast=precision)
-        except Exception:
-            if raise_failed:
-                raise
-            message('\u2717', fg='red')
-            ctx.exit(1)
-
-        if output_mode != 'native':
-            with click.open_file(output, 'w', encoding='utf-8') as fp:
-                logger.info('Serializing as {} into {}'.format(output_mode, output))
-                from kraken import serialization
-                fp.write(serialization.serialize_segmentation(res,
-                                                              image_name=input,
-                                                              image_size=im.size,
-                                                              template=output_template,
-                                                              template_source='custom' if output_mode == 'template' else 'native',
-                                                              processing_steps=steps))
-        else:
-            with click.open_file(output, 'w') as fp:
-                json.dump(dataclasses.asdict(res), fp)
-        message('\u2713', fg='green')
-
-
-    return partial(segmenter, boxes, model, text_direction, scale, maxcolseps,
-                   black_colseps, remove_hlines, pad, mask, ctx.meta['device'])

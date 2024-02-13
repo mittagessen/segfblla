@@ -7,7 +7,8 @@ from rich.traceback import install
 
 from kraken.lib import log
 
-from segfblla import train
+from .train import segtrain
+from .pred import segment
 
 def set_logger(logger=None, level=logging.ERROR):
     logger.addHandler(RichHandler(rich_tracebacks=True))
@@ -60,7 +61,8 @@ def cli(ctx, verbose, seed, deterministic, device, precision):
     ctx.meta['precision'] = precision
     log.set_logger(logger, level=30 - min(10 * verbose, 20))
 
-cli.add_command(train.segtrain)
+cli.add_command(segtrain)
+cli.add_command(segment)
 
 if __name__ == '__main__':
     cli()
