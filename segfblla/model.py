@@ -84,6 +84,7 @@ class SegmentationModel(pl.LightningModule):
         logger.info(f'Creating segformer model with {num_classes} outputs')
         self.net = SegformerForSemanticSegmentation.from_pretrained('nvidia/mit-b0',
                                                                     num_labels=num_classes)
+        self.model_config = self.net.config.to_dict()
 
         # loss
         self.criterion = nn.BCEWithLogitsLoss()
@@ -141,6 +142,12 @@ class SegmentationModel(pl.LightningModule):
         self.val_mean_accuracy.reset()
         self.val_mean_iu.reset()
         self.val_freq_iu.reset()
+
+    def on_save_checkpoint(self, checkpoint):
+        checkpoint['model_config'] = self.model_config
+
+    def on_load_checkpoint(self, checkpoint):
+        self.model_config = checkpoint['model_config']
 
     def save_checkpoint(self, filename):
         self.trainer.save_checkpoint(filename)
