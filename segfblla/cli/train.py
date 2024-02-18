@@ -33,6 +33,9 @@ from kraken.lib.exceptions import KrakenInputException
 
 from segfblla.default_specs import SEGMENTATION_HYPER_PARAMS
 
+logging.captureWarnings(True)
+logger = logging.getLogger('kraken')
+
 
 def _validate_merging(ctx, param, value):
     """

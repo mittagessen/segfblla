@@ -32,9 +32,10 @@ import importlib_resources
 from PIL import Image
 from rich.traceback import install
 
-from kraken.lib import log
-
 from .util import message
+
+logging.captureWarnings(True)
+logger = logging.getLogger('kraken')
 
 
 @click.command('segment')
