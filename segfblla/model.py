@@ -34,7 +34,7 @@ from transformers import SegformerForSemanticSegmentation
 
 
 from segfblla import default_specs
-from segfblla.losses import SymmetricUnifiedFocalLoss
+from segfblla.losses import GeneralizedDiceLoss
 from kraken.lib.xml import XMLPage
 
 if TYPE_CHECKING:
@@ -87,8 +87,12 @@ class SegmentationModel(pl.LightningModule):
         self.model_config = self.net.config.to_dict()
 
         # loss
-        self.criterion = nn.BCEWithLogitsLoss()
-        #self.criterion = SymmetricUnifiedFocalLoss()
+        if hyper_params['loss'] == 'bce':
+            self.criterion = nn.BCEWithLogitsLoss()
+        elif hyper_params['loss'] == 'gdl':
+            self.criterion = GeneralizedDiceLoss()
+        else:
+            raise ValueError(f'Unknown loss {hyper_params["loss"]} in hyperparameter dict')
 
         self.val_px_accuracy = MultilabelAccuracy(average='micro', num_labels=num_classes)
         self.val_mean_accuracy = MultilabelAccuracy(average='macro', num_labels=num_classes)

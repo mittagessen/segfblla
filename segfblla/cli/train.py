@@ -103,6 +103,12 @@ def _validate_merging(ctx, param, value):
                                  'RMSprop',
                                  'Lamb']),
               help='Select optimizer')
+@click.option('--loss',
+              show_default=True,
+              default=SEGMENTATION_HYPER_PARAMS['loss'],
+              type=click.Choice(['bce',
+                                 'gdl']),
+              help='Select loss function (bce = binary crossentropy, gdl = generalized dice loss)')
 @click.option('-r', '--lrate', show_default=True, default=SEGMENTATION_HYPER_PARAMS['lrate'], help='Learning rate')
 @click.option('-m', '--momentum', show_default=True, default=SEGMENTATION_HYPER_PARAMS['momentum'], help='Momentum')
 @click.option('-w', '--weight-decay', show_default=True,
@@ -182,7 +188,7 @@ def _validate_merging(ctx, param, value):
 @click.option('-bl', '--baseline', 'topline', flag_value='baseline', default='baseline')
 @click.argument('ground_truth', nargs=-1, callback=_expand_gt, type=click.Path(exists=False, dir_okay=False))
 def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
-             epochs, min_epochs, lag, min_delta, optimizer,
+             epochs, min_epochs, lag, min_delta, optimizer, loss,
              lrate, momentum, weight_decay, warmup, schedule, gamma, step_size,
              sched_patience, cos_max, partition, training_files,
              evaluation_files, workers, threads, suppress_regions,
@@ -233,7 +239,8 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
                          'step_size': step_size,
                          'rop_patience': sched_patience,
                          'cos_t_max': cos_max,
-                         'patch_size': patch_size
+                         'patch_size': patch_size,
+                         'loss': loss
                          })
 
     # disable automatic partition when given evaluation set explicitly

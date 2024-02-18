@@ -41,5 +41,6 @@ SEGMENTATION_HYPER_PARAMS = {'line_width': 8,
                              # cosine
                              'cos_t_max': 50,
                              'warmup': 0,
-                             'patch_size': (512, 512)
+                             'patch_size': (512, 512),
+                             'loss': 'bce',
                              }
