@@ -1,6 +1,6 @@
+import torch
 import torch.nn.functional as F
 
-from torch import Tensor
 from torch.nn.modules.loss import _Loss
 
 
@@ -12,14 +12,14 @@ class GeneralizedDiceLoss(_Loss):
         super(GeneralizedDiceLoss, self).__init__()
         self.eps = 1e-7
 
-    def forward(self, y_pred: Tensor, y_true: Tensor) -> Tensor:
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
         assert y_true.size(0) == y_pred.size(0)
 
         y_pred = F.logsigmoid(y_pred).exp()
 
         num_classes = y_pred.size(1)
-        y_true = y_true.permute(1, 0, 2, 3).view(num_classes, -1)
-        y_pred = y_pred.permute(1, 0, 2, 3).view(num_classes, -1)
+        y_true = y_true.permute(1, 0, 2, 3).reshape(num_classes, -1)
+        y_pred = y_pred.permute(1, 0, 2, 3).reshape(num_classes, -1)
 
         # Find classes weights:
         sum_targets = y_true.sum(-1)
