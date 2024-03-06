@@ -28,7 +28,7 @@ from torchvision.transforms import v2
 
 from transformers import SegformerConfig, SegformerForSemanticSegmentation
 
-from pytorch_toolbelt.inference.tiles import ImageSlicer, CudaTileMerger
+from segfblla.tiles import ImageSlicer
 
 from kraken.blla import vec_regions, vec_lines
 from kraken.lib.segmentation import polygonal_reading_order
