@@ -26,9 +26,9 @@ import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 from torch import nn
-from pytorch_lightning.callbacks import (Callback, EarlyStopping)
+from pytorch_lightning.callbacks import Callback, EarlyStopping
 from torch.optim import lr_scheduler
-from torchmetrics.classification import (MultilabelAccuracy, MultilabelJaccardIndex)
+from torchmetrics.classification import MultilabelAccuracy, MultilabelJaccardIndex
 
 from transformers import SegformerForSemanticSegmentation
 
@@ -84,6 +84,7 @@ class SegmentationModel(pl.LightningModule):
         logger.info(f'Creating segformer model with {num_classes} outputs')
         self.net = SegformerForSemanticSegmentation.from_pretrained('nvidia/mit-b0',
                                                                     num_labels=num_classes)
+        self.net = self.net.train()
         self.model_config = self.net.config.to_dict()
 
         # loss
