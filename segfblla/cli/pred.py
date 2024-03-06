@@ -102,6 +102,7 @@ def segment(ctx, input, batch_input, suffix, format_type, pdf_format,
 
     from threadpoolctl import threadpool_limits
 
+    from segfblla.pred import load_model_checkpoint, segment
     from kraken.lib.progress import KrakenProgressBar
 
     if not model:
@@ -126,14 +127,7 @@ def segment(ctx, input, batch_input, suffix, format_type, pdf_format,
 
     message(f'Loading model {model}')
     try:
-        lm = torch.load(model, map_location=torch.device(ctx.meta['device']))
-        model_weights = lm['state_dict']
-        class_mapping = lm['BaselineDataModule']['class_mapping']
-        config = SegformerConfig.from_dict(lm['model_config'])
-        net = SegformerForSemanticSegmentation(config)
-        for key in list(model_weights):
-            model_weights[key.replace("net.", "")] = model_weights.pop(key)
-        net.load_state_dict(model_weights)
+        net = load_model_checkpoint(model, device=ctx.meta['device'])
     except Exception:
         if raise_on_error:
             raise
@@ -198,13 +192,13 @@ def segment(ctx, input, batch_input, suffix, format_type, pdf_format,
     for io_pair in input:
         try:
             with threadpool_limits(limits=threads):
-                _segment(input=input, output=output)
+                _segment(input=input, output=output, model=net)
         except Exception as e:
             logger.error(f'Failed processing {io_pair[0]}: {str(e)}')
             if raise_failed:
                 raise
 
-    def _segment(input, output):
+    def _segment(input, output, model):
         if input_format_type != 'image':
             input = get_input_parser(input_format_type)(input).imagename
 
@@ -214,8 +208,8 @@ def segment(ctx, input, batch_input, suffix, format_type, pdf_format,
             raise click.BadParameter(str(e))
         message('Segmenting\t', nl=False)
         try:
-            res = blla.segment(im, text_direction, mask=mask, model=model, device=device,
-                               raise_on_error=raise_failed, autocast=precision)
+            res = segment(im, text_direction, model=model, device=model.device,
+                          raise_on_error=raise_failed, autocast=precision)
         except Exception:
             if raise_failed:
                 raise
