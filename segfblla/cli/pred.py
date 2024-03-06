@@ -126,7 +126,7 @@ def segment(ctx, input, batch_input, suffix, format_type, pdf_format,
 
     message(f'Loading model {model}')
     try:
-        lm = torch.load(location, map_location=torch.device(ctx.meta['device']))
+        lm = torch.load(model, map_location=torch.device(ctx.meta['device']))
         model_weights = lm['state_dict']
         class_mapping = lm['BaselineDataModule']['class_mapping']
         config = SegformerConfig.from_dict(lm['model_config'])
