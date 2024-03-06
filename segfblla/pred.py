@@ -24,8 +24,11 @@ from os import PathLike
 from functools import partial
 from pathlib import Path
 from typing import IO, Any, Callable, Dict, List, Union, Tuple
+from torchvision.transforms import v2
 
 from transformers import SegformerConfig, SegformerForSemanticSegmentation
+
+from pytorch_toolbelt.inference.tiles import ImageSlicer, CudaTileMerger
 
 from kraken.blla import vec_regions, vec_lines
 from kraken.lib.segmentation import polygonal_reading_order
@@ -45,12 +48,14 @@ def load_model_checkpoint(filename: PathLike, device: torch.device) -> torch.nn.
     net.load_state_dict(model_weights)
     net.class_mapping = lm['BaselineDataModule']['class_mapping']
     net.topline = lm['BaselineDataModule']['hyper_parameters']['topline']
+    net.patch_size = lm['BaselineDataModule']['hyper_parameters']['patch_size']
     return net
 
 
 def compute_segmentation_map(im: PIL.Image.Image,
                              model: nn.Module = None,
                              device: torch.device = torch.device('cpu'),
+                             batch_size: int = 1,
                              autocast: bool = True) -> Dict[str, Any]:
     """
     Args:
@@ -69,23 +74,38 @@ def compute_segmentation_map(im: PIL.Image.Image,
     model.eval()
     model.to(device)
 
+    tiler = ImageSlicer(image.size[::-1],
+                        tile_size=model.patch_size,
+                        overlap=(32, 32),
+                        batch_size=batch_size)
+
+    transforms = v2.Compose([v2.PILToTensor(),
+                             v2.ConvertDtype(torch.float32),
+                             v2.Normalize(mean=(0.485, 0.456, 0.406),
+                                          std=(0.229, 0.224, 0.225)),
+                            ]
+                           )
+
     tensor_im = transforms(im)
+
     with torch.autocast(device_type=device.split(":")[0], enabled=autocast):
         with torch.no_grad():
-            logger.debug('Running network forward pass')
-            o, _ = model.nn(tensor_im.to(device))
-    logger.debug('Reassembling patches')
-
+            tiles = []
+            for tile in tiler.split(tensor_im):
+                logger.debug('Running network forward pass')
+                tiles.append(model.nn(tensor_im.to(device)))
+            tiles = torch.cat(tiles)
     logger.debug('Upsampling network output')
-    o = F.interpolate(o, size=im.shape)
+    tiles = F.interpolate(tiles, tiler.tile_size, mode='bicubic')
+    logger.debug('Reassembling patches')
+    o = tiler.merge(tiles)
     o = o.squeeze().cpu().float().numpy()
-    scale = np.divide(im.size, o.shape[:0:-1])
 
     return {'heatmap': o,
             'cls_map': model.class_mapping,
             'bounding_regions': None,
-            'scale': scale,
-            'scal_im': scal_im}
+            'scale': 1.0,
+            'scal_im': im}
 
 
 def segment(im: PIL.Image.Image,
