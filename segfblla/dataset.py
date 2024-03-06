@@ -88,7 +88,8 @@ class BaselineDataModule(pl.LightningDataModule):
                                 valid_baselines=self.hparams.valid_baselines,
                                 merge_baselines=self.hparams.merge_baselines,
                                 valid_regions=self.hparams.valid_regions,
-                                merge_regions=self.hparams.merge_regions)
+                                merge_regions=self.hparams.merge_regions,
+                                patch_size = self.hparams.patch_size)
 
         for page in train_data:
             train_set.add(page)
@@ -99,7 +100,8 @@ class BaselineDataModule(pl.LightningDataModule):
                                   valid_baselines=self.hparams.valid_baselines,
                                   merge_baselines=self.hparams.merge_baselines,
                                   valid_regions=self.hparams.valid_regions,
-                                  merge_regions=self.hparams.merge_regions)
+                                  merge_regions=self.hparams.merge_regions,
+                                  patch_size = self.hparams.patch_size)
 
             for page in val_data:
                 val_set.add(page)
@@ -164,7 +166,8 @@ class BaselineSet(Dataset):
                  valid_baselines: Sequence[str] = None,
                  merge_baselines: Dict[str, Sequence[str]] = None,
                  valid_regions: Sequence[str] = None,
-                 merge_regions: Dict[str, Sequence[str]] = None):
+                 merge_regions: Dict[str, Sequence[str]] = None,
+                 patch_size: Union[int, Tuple[int, int]] = (512, 512)):
         """
         Creates a dataset for a text-line and region segmentation model.
 
@@ -182,6 +185,7 @@ class BaselineSet(Dataset):
             merge_regions: Sequence of region identifiers to merge. Note that
                            merging occurs after entities not in valid_* have
                            been discarded.
+            patch_size: Size of the image patch to return.
         """
         super().__init__()
         self.imgs = []
@@ -197,6 +201,12 @@ class BaselineSet(Dataset):
         self.mreg_dict = merge_regions if merge_regions is not None else {}
         self.valid_baselines = valid_baselines
         self.valid_regions = valid_regions
+        if isinstance(patch_size, Sequence):
+            if len(patch_size) != 2:
+                raise ValueError(f'patch_size={patch_size} needs to be of length 2')
+            self.patch_size = patch_size
+        else:
+            self.patch_size = patch_size, patch_size
 
         self.aug = None
         if augmentation:
@@ -221,7 +231,7 @@ class BaselineSet(Dataset):
                                                    std=(0.229, 0.224, 0.225))
                                      ]
                                     )
-        self.patch_crop = v2.RandomCrop((512, 512))
+        self.patch_crop = v2.RandomCrop(patch_size)
         self.seg_type = None
 
     def add(self, doc: 'Segmentation'):
