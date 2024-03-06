@@ -21,6 +21,7 @@ Command line drivers for recognition inference.
 import dataclasses
 import logging
 import os
+import uuid
 import shlex
 import warnings
 from functools import partial
@@ -41,6 +42,8 @@ logger = logging.getLogger('kraken')
 @click.command('segment')
 @click.pass_context
 @click.version_option()
+@click.option('-B', '--batch-size', show_default=True, type=click.INT,
+              default=1, help='batch sample size')
 @click.option('-i', '--input',
               type=(click.Path(exists=True, dir_okay=False, path_type=Path),  # type: ignore
                     click.Path(writable=True, dir_okay=False, path_type=Path)),
@@ -85,9 +88,9 @@ logger = logging.getLogger('kraken')
               type=click.Choice(['horizontal-lr', 'horizontal-rl',
                                  'vertical-lr', 'vertical-rl']),
               help='Sets principal text direction')
-def segment(ctx, input, batch_input, suffix, format_type, pdf_format,
-            serializer, template, device, raise_on_error, threads, model,
-            text_direction):
+def segment(ctx, batch_size, input, batch_input, suffix, format_type,
+            pdf_format, serializer, template, device, raise_on_error, threads,
+            model, text_direction):
     """
     Segmentation inference with SegFormer models.
 
@@ -103,6 +106,8 @@ def segment(ctx, input, batch_input, suffix, format_type, pdf_format,
     from threadpoolctl import threadpool_limits
 
     from segfblla.pred import load_model_checkpoint, segment
+
+    from kraken.containers import ProcessingStep
     from kraken.lib.progress import KrakenProgressBar
 
     if not model:
@@ -133,17 +138,14 @@ def segment(ctx, input, batch_input, suffix, format_type, pdf_format,
             raise
         raise click.BadOptionUsage('model', f'Invalid model {model}')
 
-    ctx.meta['steps'].append({'category': 'processing',
-                              'description': 'Baseline and region segmentation',
-                              'settings': {'model': os.path.basename(model),
-                                           'text_direction': text_direction}})
-
     input = list(input)
     # expand batch inputs
     if batch_input and suffix:
         for batch_expr in batch_input:
             for in_file in glob.glob(batch_expr, recursive=True):
                 input.append((in_file, '{}{}'.format(os.path.splitext(in_file)[0], suffix)))
+
+    steps = []
 
     # parse pdfs
     if format_type == 'pdf':
@@ -184,19 +186,20 @@ def segment(ctx, input, batch_input, suffix, format_type, pdf_format,
                     progress.update(pdf_parse_task, total=num_pages)
                     logger.warning(f'{fpath} is not a PDF file. Skipping.')
         input = new_input
-        ctx.meta['steps'].insert(0, {'category': 'preprocessing', 'description': 'PDF image extraction', 'settings': {}})
+        steps.append(ProcessingStep(id=uuid.uuid4(),
+                                    category='preprocessing',
+                                    description='PDF image extraction',
+                                    settings={}))
+
+    steps.append(ProcessingStep(id=uuid.uuid4(),
+                                category='processing',
+                                description='Baseline and region segmentation',
+                                settings={'model': os.path.basename(model),
+                                          'text_direction': text_direction}))
+
 
     if not input:
         raise click.UsageError('No inputs given with eihter `--input` or `--batch-input`')
-
-    for io_pair in input:
-        try:
-            with threadpool_limits(limits=threads):
-                _segment(input=input, output=output, model=net)
-        except Exception as e:
-            logger.error(f'Failed processing {io_pair[0]}: {str(e)}')
-            if raise_failed:
-                raise
 
     def _segment(input, output, model):
         if input_format_type != 'image':
@@ -208,8 +211,16 @@ def segment(ctx, input, batch_input, suffix, format_type, pdf_format,
             raise click.BadParameter(str(e))
         message('Segmenting\t', nl=False)
         try:
-            res = segment(im, text_direction, model=model, device=model.device,
-                          raise_on_error=raise_failed, autocast=precision)
+            with KrakenProgressBar() as progress:
+                pred_task = progress.add_task('Segmenting', total=0, visible=True if not ctx.meta['verbose'] else False)
+                res = segment(im,
+                              text_direction,
+                              model=model,
+                              device=model.device,
+                              raise_on_error=raise_failed,
+                              batch_size=batch_size,
+                              autocast=ctx.meta['autocast'],
+                              callback=lambda total, advance: progress.update(pred_task, total=total, advance=advance))
         except Exception:
             if raise_failed:
                 raise
@@ -231,6 +242,11 @@ def segment(ctx, input, batch_input, suffix, format_type, pdf_format,
                 json.dump(dataclasses.asdict(res), fp)
         message('\u2713', fg='green')
 
-
-    return partial(segmenter, boxes, model, text_direction, scale, maxcolseps,
-                   black_colseps, remove_hlines, pad, mask, ctx.meta['device'])
+    for io_pair in input:
+        try:
+            with threadpool_limits(limits=threads):
+                _segment(input=io_pair[0], output=io_pair[1], model=net)
+        except Exception as e:
+            logger.error(f'Failed processing {io_pair[0]}: {str(e)}')
+            if raise_failed:
+                raise

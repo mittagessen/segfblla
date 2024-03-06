@@ -96,6 +96,7 @@ class ImageSlicer(object):
 
         self.crops = np.array(crops)
         self.bbox_crops = np.array(bbox_crops)
+        self.num_batches = int(np.ceil(len(self.bbox_crops)/self.batch_size))
 
     def split(self, image: torch.Tensor) -> Iterable[Tuple[torch.Tensor, Tuple[int, int, int, int]]]:
         if (image.shape[1] != self.image_height) or (image.shape[2] != self.image_width):

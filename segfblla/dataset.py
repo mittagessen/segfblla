@@ -70,7 +70,6 @@ class BaselineDataModule(pl.LightningDataModule):
 
         self.save_hyperparameters()
 
-
         logger.info(f'Parsing {len(train_files)} XML files for training data')
         train_data = [XMLPage(file).to_container() for file in self.hparams.train_files]
 
@@ -149,7 +148,10 @@ class BaselineDataModule(pl.LightningDataModule):
 
     def state_dict(self):
         # track whatever you want here
-        return {"class_mapping": self.class_mapping}
+        return {"class_mapping": self.class_mapping,
+                'patch_size': self.hparams.patch_size,
+                'topline': self.hparams.topline}
+
 
     def load_state_dict(self, state_dict):
         # restore the state based on what you tracked in (def state_dict)

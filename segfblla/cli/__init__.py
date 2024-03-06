@@ -47,7 +47,9 @@ Image.MAX_IMAGE_PIXELS = 20000 ** 2
               default='16',
               type=click.Choice(['64', '32', 'bf16', '16']),
               help='Numerical precision to use for training. Default is 32-bit single-point precision.')
-def cli(ctx, verbose, seed, deterministic, device, precision):
+@click.option('-2', '--autocast', default=False, show_default=True, flag_value=True,
+              help='On compatible devices, uses autocast for `segment` which lower the memory usage.')
+def cli(ctx, verbose, seed, deterministic, device, precision, autocast):
     ctx.meta['deterministic'] = False if not deterministic else 'warn'
     if seed:
         from pytorch_lightning import seed_everything
@@ -59,6 +61,7 @@ def cli(ctx, verbose, seed, deterministic, device, precision):
     ctx.meta['verbose'] = verbose
     ctx.meta['device'] = device
     ctx.meta['precision'] = precision
+    ctx.meta['autocast'] = autocast
     log.set_logger(logger, level=30 - min(10 * verbose, 20))
 
 cli.add_command(segtrain)

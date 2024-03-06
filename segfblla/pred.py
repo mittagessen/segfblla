@@ -57,8 +57,8 @@ def load_model_checkpoint(filename: 'PathLike', device: torch.device) -> 'nn.Mod
         model_weights[key.replace("net.", "")] = model_weights.pop(key)
     net.load_state_dict(model_weights)
     net.class_mapping = lm['BaselineDataModule']['class_mapping']
-    net.topline = lm['BaselineDataModule']['hyper_parameters']['topline']
-    net.patch_size = lm['BaselineDataModule']['hyper_parameters']['patch_size']
+    net.topline = lm['BaselineDataModule'].get('topline', False)
+    net.patch_size = lm['BaselineDataModule'].get('patch_size', (512, 512))
     return net
 
 
@@ -66,7 +66,8 @@ def compute_segmentation_map(im: PIL.Image.Image,
                              model: 'nn.Module' = None,
                              device: torch.device = torch.device('cpu'),
                              batch_size: int = 1,
-                             autocast: bool = True) -> Dict[str, Any]:
+                             autocast: bool = True,
+                             callback: Callable[[int, int], Any] = None) -> Dict[str, Any]:
     """
     Args:
         im: Input image
@@ -89,6 +90,8 @@ def compute_segmentation_map(im: PIL.Image.Image,
                         overlap=(32, 32),
                         batch_size=batch_size)
 
+    callback(tiler.num_batches, 0)
+
     transforms = v2.Compose([v2.PILToTensor(),
                              v2.ConvertDtype(torch.float32),
                              v2.Normalize(mean=(0.485, 0.456, 0.406),
@@ -98,12 +101,13 @@ def compute_segmentation_map(im: PIL.Image.Image,
 
     tensor_im = transforms(im)
 
-    with torch.autocast(device_type=device.split(":")[0], enabled=autocast):
+    with torch.autocast(device_type=str(device).split(":")[0], enabled=autocast):
         with torch.no_grad():
             tiles = []
-            for tile in tiler.split(tensor_im):
+            for idx, tile in enumerate(tiler.split(tensor_im)):
                 logger.debug('Running network forward pass')
-                tiles.append(model.nn(tensor_im.to(device)))
+                callback(tiler.num_batches, 1)
+                tiles.append(torch.sigmoid(model(tile.to(device)).logits))
             tiles = torch.cat(tiles)
     logger.debug('Upsampling network output')
     tiles = F.interpolate(tiles, tiler.tile_size, mode='bicubic')
@@ -123,7 +127,9 @@ def segment(im: PIL.Image.Image,
             model: 'nn.Module' = None,
             device: torch.device = torch.device('cpu'),
             raise_on_error: bool = False,
-            autocast: bool = True) -> Segmentation:
+            autocast: bool = True,
+            batch_size: int = 4,
+            callback: Callable[[int, int], Any] = None) -> Segmentation:
     r"""
     Segments a page into text lines using the baseline segmenter.
 
@@ -158,14 +164,27 @@ def segment(im: PIL.Image.Image,
 
     lines = []
 
-    rets = compute_segmentation_map(im, model, device, autocast=autocast)
-    regions = vec_regions(**rets)
+    def _callback(_total, advance):
+        global total
+        total = _total
+        if callback:
+            callback(_total + 3, advance)
+
+    rets = compute_segmentation_map(im,
+                                    model,
+                                    device,
+                                    batch_size=batch_size,
+                                    autocast=autocast,
+                                    callback=_callback)
+    callback(total+3, 1)
+    regions = vec_regions(**rets, scale=1.0)
 
     # flatten regions for line ordering
     line_regs = []
     for cls, regs in regions.items():
-        line_regs.extend(regs)
+        line_regs.extend([reg.boundary for reg in regs])
 
+    callback(total+3, 1)
     lines = vec_lines(**rets,
                       scale=1.0,
                       regions=line_regs,
@@ -185,6 +204,7 @@ def segment(im: PIL.Image.Image,
         for reg in rgs:
             _shp_regs[reg.id] = geom.Polygon(reg.boundary)
 
+    callback(total+3, 1)
     # reorder lines
     logger.debug(f'Reordering baselines with main RO function {reading_order_fn}.')
     basic_lo = reading_order_fn(lines=lines, regions=_shp_regs.values(), text_direction=text_direction[-2:])
