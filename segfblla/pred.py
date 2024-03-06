@@ -18,12 +18,15 @@ segfblla.pred
 
 Command line drivers for recognition inference.
 """
+import PIL
+import uuid
 import torch
-import warnings
-from os import PathLike
-from functools import partial
-from pathlib import Path
-from typing import IO, Any, Callable, Dict, List, Union, Tuple
+import logging
+import numpy as np
+import shapely.geometry as geom
+import torch.nn.functional as F
+
+from typing import Any, Callable, Dict, Literal, TYPE_CHECKING
 from torchvision.transforms import v2
 
 from transformers import SegformerConfig, SegformerForSemanticSegmentation
@@ -31,16 +34,23 @@ from transformers import SegformerConfig, SegformerForSemanticSegmentation
 from segfblla.tiles import ImageSlicer
 
 from kraken.blla import vec_regions, vec_lines
-from kraken.lib.segmentation import polygonal_reading_order
+from kraken.containers import Segmentation, BaselineLine
+from kraken.lib.segmentation import polygonal_reading_order, is_in_region
 
-def load_model_checkpoint(filename: PathLike, device: torch.device) -> torch.nn.Module:
+if TYPE_CHECKING:
+    from os import PathLike
+    from torch import nn
+
+logger = logging.getLogger(__name__)
+
+
+def load_model_checkpoint(filename: 'PathLike', device: torch.device) -> 'nn.Module':
     """
     Instantiates a pure torch nn.Module from a lightning checkpoint and returns
     the class mapping.
     """
-    lm = torch.load(location, map_location=device)
+    lm = torch.load(filename, map_location=device)
     model_weights = lm['state_dict']
-    class_mapping = lm['BaselineDataModule']['class_mapping']
     config = SegformerConfig.from_dict(lm['model_config'])
     net = SegformerForSemanticSegmentation(config)
     for key in list(model_weights):
@@ -53,7 +63,7 @@ def load_model_checkpoint(filename: PathLike, device: torch.device) -> torch.nn.
 
 
 def compute_segmentation_map(im: PIL.Image.Image,
-                             model: nn.Module = None,
+                             model: 'nn.Module' = None,
                              device: torch.device = torch.device('cpu'),
                              batch_size: int = 1,
                              autocast: bool = True) -> Dict[str, Any]:
@@ -74,7 +84,7 @@ def compute_segmentation_map(im: PIL.Image.Image,
     model.eval()
     model.to(device)
 
-    tiler = ImageSlicer(image.size[::-1],
+    tiler = ImageSlicer(im.size[::-1],
                         tile_size=model.patch_size,
                         overlap=(32, 32),
                         batch_size=batch_size)
@@ -104,14 +114,13 @@ def compute_segmentation_map(im: PIL.Image.Image,
     return {'heatmap': o,
             'cls_map': model.class_mapping,
             'bounding_regions': None,
-            'scale': 1.0,
-            'scal_im': im}
+            'scal_im': np.array(im)}
 
 
 def segment(im: PIL.Image.Image,
             text_direction: Literal['horizontal-lr', 'horizontal-rl', 'vertical-lr', 'vertical-rl'] = 'horizontal-lr',
             reading_order_fn: Callable = polygonal_reading_order,
-            model: nn.Module = None,
+            model: 'nn.Module' = None,
             device: torch.device = torch.device('cpu'),
             raise_on_error: bool = False,
             autocast: bool = True) -> Segmentation:
@@ -148,9 +157,8 @@ def segment(im: PIL.Image.Image,
     logger.debug(f'Baseline location: {loc}')
 
     lines = []
-    order = None
 
-    rets = compute_segmentation_map(im, mask, model, device, autocast=autocast)
+    rets = compute_segmentation_map(im, model, device, autocast=autocast)
     regions = vec_regions(**rets)
 
     # flatten regions for line ordering
@@ -158,10 +166,8 @@ def segment(im: PIL.Image.Image,
     for cls, regs in regions.items():
         line_regs.extend(regs)
 
-    # convert back to net scale
-    line_regs = scale_regions([x.boundary for x in line_regs], 1/rets['scale'])
-
     lines = vec_lines(**rets,
+                      scale=1.0,
                       regions=line_regs,
                       text_direction=text_direction,
                       topline=model.topline,
@@ -199,4 +205,3 @@ def segment(im: PIL.Image.Image,
                         regions=regions,
                         script_detection=script_detection,
                         line_orders=[])
-
