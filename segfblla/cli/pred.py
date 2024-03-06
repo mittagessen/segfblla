@@ -78,16 +78,16 @@ logger = logging.getLogger('kraken')
               help='Raises the exception that caused processing to fail in the case of an error')
 @click.option('--threads', default=1, show_default=True, type=click.IntRange(1),
               help='Size of thread pools for intra-op parallelization')
-@click.option('-m', '--model', default=None, show_default=True,
-              help='Baseline detection model to use')
+@click.option('-m', '--model', show_default=True, help='Baseline detection '
+              ' model to use')
 @click.option('-d', '--text-direction', default='horizontal-lr',
               show_default=True,
               type=click.Choice(['horizontal-lr', 'horizontal-rl',
                                  'vertical-lr', 'vertical-rl']),
               help='Sets principal text direction')
-def segment(input, batch_input, suffix, format_type, pdf_format,
-            serializer, template, device, raise_on_error, threads,
-            model, text_direction):
+def segment(ctx, input, batch_input, suffix, format_type, pdf_format,
+            serializer, template, device, raise_on_error, threads, model,
+            text_direction):
     """
     Segmentation inference with SegFormer models.
 
@@ -103,6 +103,9 @@ def segment(input, batch_input, suffix, format_type, pdf_format,
     from threadpoolctl import threadpool_limits
 
     from kraken.lib.progress import KrakenProgressBar
+
+    if not model:
+        raise click.UsageError('No model defined with `--model`')
 
     if ctx.meta['device'] != 'cpu':
         try:
@@ -121,7 +124,7 @@ def segment(input, batch_input, suffix, format_type, pdf_format,
         output_mode = 'template'
         output_template = template
 
-    message(f'Loading model {model}\t', nl=False)
+    message(f'Loading model {model}')
     try:
         lm = torch.load(location, map_location=torch.device(ctx.meta['device']))
         model_weights = lm['state_dict']
@@ -132,12 +135,9 @@ def segment(input, batch_input, suffix, format_type, pdf_format,
             model_weights[key.replace("net.", "")] = model_weights.pop(key)
         net.load_state_dict(model_weights)
     except Exception:
-        if ctx.meta['raise_failed']:
+        if raise_on_error:
             raise
-        message('\u2717', fg='red')
-        ctx.exit(1)
-
-    message('\u2713', fg='green')
+        raise click.BadOptionUsage('model', f'Invalid model {model}')
 
     ctx.meta['steps'].append({'category': 'processing',
                               'description': 'Baseline and region segmentation',
@@ -191,6 +191,9 @@ def segment(input, batch_input, suffix, format_type, pdf_format,
                     logger.warning(f'{fpath} is not a PDF file. Skipping.')
         input = new_input
         ctx.meta['steps'].insert(0, {'category': 'preprocessing', 'description': 'PDF image extraction', 'settings': {}})
+
+    if not input:
+        raise click.UsageError('No inputs given with eihter `--input` or `--batch-input`')
 
     for io_pair in input:
         try:
