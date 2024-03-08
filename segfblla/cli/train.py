@@ -320,7 +320,7 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
     if not ctx.meta['verbose']:
         cbs.append(KrakenTrainProgressBar(leave=True))
 
-    checkpoint_callback = ModelCheckPoint(dirpath=output, save_top_k=5, monitor='val_mean_iu', mode='max')
+    checkpoint_callback = ModelCheckpoint(dirpath=output, save_top_k=5, monitor='val_mean_iu', mode='max')
     cbs.append(checkpoint_callback)
 
     trainer = Trainer(accelerator=accelerator,
