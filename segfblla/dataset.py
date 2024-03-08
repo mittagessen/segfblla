@@ -233,7 +233,7 @@ class BaselineSet(Dataset):
                                                    std=(0.229, 0.224, 0.225))
                                      ]
                                     )
-        self.patch_crop = v2.RandomCrop(patch_size)
+        self.patch_crop = v2.RandomCrop(self.patch_size)
         self.seg_type = None
 
     def add(self, doc: 'Segmentation'):
@@ -307,7 +307,7 @@ class BaselineSet(Dataset):
     def transform(self, image, target):
         orig_size = image.size
         image = self.transforms(image)
-        i, j, h, w = self.patch_crop.get_params(image, (512, 512))
+        i, j, h, w = self.patch_crop.get_params(image, self.patch_size)
         image = v2.functional.crop(image, i, j, h, w)
 
         t = torch.zeros((self.num_classes,) + image.shape[1:])
