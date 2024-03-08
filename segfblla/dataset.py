@@ -307,8 +307,9 @@ class BaselineSet(Dataset):
     def transform(self, image, target):
         orig_size = image.size
         image = self.transforms(image)
-        i, j, h, w = self.patch_crop.get_params(image, self.patch_size)
-        image = v2.functional.crop(image, i, j, h, w)
+        if image.shape[1] > self.patch_size[0] and image.shape[2] > self.patch_size[1]:
+            i, j, h, w = self.patch_crop.get_params(image, self.patch_size)
+            image = v2.functional.crop(image, i, j, h, w)
 
         t = torch.zeros((self.num_classes,) + image.shape[1:])
 
