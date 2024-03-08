@@ -82,7 +82,7 @@ class SegmentationModel(pl.LightningModule):
             torch.multiprocessing.set_sharing_strategy('file_system')
 
         logger.info(f'Creating segformer model with {num_classes} outputs')
-        self.net = SegformerForSemanticSegmentation.from_pretrained('nvidia/mit-b0',
+        self.net = SegformerForSemanticSegmentation.from_pretrained('nvidia/mit-b5',
                                                                     num_labels=num_classes)
         self.net = self.net.train()
         self.model_config = self.net.config.to_dict()

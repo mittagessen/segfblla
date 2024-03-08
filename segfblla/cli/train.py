@@ -62,7 +62,7 @@ def _validate_merging(ctx, param, value):
 @click.pass_context
 @click.option('-B', '--batch-size', show_default=True, type=click.INT,
               default=SEGMENTATION_HYPER_PARAMS['batch_size'], help='batch sample size')
-@click.option('-o', '--output', show_default=True, type=click.Path(), default='model', help='Output model file')
+@click.option('-o', '--output', show_default=True, type=click.Path(), default='segfblla', help='Output checkpoint directory')
 @click.option('--line-width',
               show_default=True,
               default=SEGMENTATION_HYPER_PARAMS['line_width'],
@@ -209,7 +209,7 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
     from segfblla.model import SegmentationModel
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.callbacks import RichModelSummary
+    from pytorch_lightning.callbacks import RichModelSummary, ModelCheckpoint
 
     if not (0 <= freq <= 1) and freq % 1.0 != 0:
         raise click.BadOptionUsage('freq', 'freq needs to be either in the interval [0,1.0] or a positive integer.')
@@ -320,6 +320,9 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
     if not ctx.meta['verbose']:
         cbs.append(KrakenTrainProgressBar(leave=True))
 
+    checkpoint_callback = ModelCheckPoint(dirpath=output, save_top_k=5, monitor='val_mean_iu', mode='max')
+    cbs.append(checkpoint_callback)
+
     trainer = Trainer(accelerator=accelerator,
                       devices=device,
                       precision=ctx.meta['precision'],
@@ -341,3 +344,5 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
     if not model.current_epoch:
         logger.warning('Training aborted before end of first epoch.')
         ctx.exit(1)
+
+    message(f'Best model: {checkpoint_callback.best_model_path}')
