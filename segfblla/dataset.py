@@ -249,9 +249,9 @@ class BaselineSet(Dataset):
         self.transforms = v2.Compose([v2.PILToTensor(),
                                       v2.ConvertDtype(torch.float32),
                                       v2.Normalize(mean=(0.485, 0.456, 0.406),
-                                                   std=(0.229, 0.224, 0.225))
+                                                   std=(0.229, 0.224, 0.225)),
+                                      MinResize(max(self.patch_size))
                                      ]
-                                     MinResize(max(self.patch_size))
                                     )
         self.patch_crop = v2.RandomCrop(self.patch_size)
         self.seg_type = None
