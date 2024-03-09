@@ -33,9 +33,9 @@ import albumentations as A
 from PIL import Image
 from shapely.ops import split
 from skimage.draw import polygon
-from torch.utils.data import Dataset
+from torch import nn
 from torchvision import transforms
-from torch.utils.data import DataLoader, Subset, random_split
+from torch.utils.data import Dataset, DataLoader, Subset, random_split
 from torchvision.transforms import v2
 
 from kraken.lib.xml import XMLPage
@@ -158,6 +158,25 @@ class BaselineDataModule(pl.LightningDataModule):
         self.class_mapping = state_dict['class_mapping']
 
 
+class MinResize(v2.Resize):
+    """Resizes the input if it is smaller in any dimension than `size`.
+
+    Behavior is identical to v2.Resize otherwise.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def _transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        _, h, w = inpt.shape
+        if len(self.size) == 1:  # specified size only for the smallest edge
+            short, long = (w, h) if w <= h else (h, w)
+            if short >= self.size[0]:
+                return inpt
+        elif self.size[0] <= h and self.size[1] <= w:
+            return inpt
+        return super()._transform(inpt, params)
+
+
 class BaselineSet(Dataset):
     """
     Dataset for training a baseline/region segmentation model.
@@ -232,6 +251,7 @@ class BaselineSet(Dataset):
                                       v2.Normalize(mean=(0.485, 0.456, 0.406),
                                                    std=(0.229, 0.224, 0.225))
                                      ]
+                                     MinResize(max(self.patch_size))
                                     )
         self.patch_crop = v2.RandomCrop(self.patch_size)
         self.seg_type = None
@@ -307,9 +327,8 @@ class BaselineSet(Dataset):
     def transform(self, image, target):
         orig_size = image.size
         image = self.transforms(image)
-        if image.shape[1] > self.patch_size[0] and image.shape[2] > self.patch_size[1]:
-            i, j, h, w = self.patch_crop.get_params(image, self.patch_size)
-            image = v2.functional.crop(image, i, j, h, w)
+        i, j, h, w = self.patch_crop.get_params(image, self.patch_size)
+        image = v2.functional.crop(image, i, j, h, w)
 
         t = torch.zeros((self.num_classes,) + image.shape[1:])
 
