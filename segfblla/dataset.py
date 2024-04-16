@@ -247,7 +247,7 @@ class BaselineSet(Dataset):
                                  ], p=0.5)
         self.line_width = line_width
         self.transforms = v2.Compose([v2.PILToTensor(),
-                                      v2.ConvertDtype(torch.float32),
+                                      v2.ToDtype(torch.float32),
                                       v2.Normalize(mean=(0.485, 0.456, 0.406),
                                                    std=(0.229, 0.224, 0.225)),
                                       MinResize(max(self.patch_size))
