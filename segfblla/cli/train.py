@@ -146,6 +146,10 @@ def _validate_merging(ctx, param, value):
               show_default=True,
               default=SEGMENTATION_HYPER_PARAMS['cos_t_max'],
               help='Epoch of minimal learning rate for cosine LR scheduler.')
+@click.option('--cos-min-lr',
+              show_default=True,
+              default=RECOGNITION_HYPER_PARAMS['cos_min_lr'],
+              help='Minimal final learning rate for cosine LR scheduler.')
 @click.option('-p', '--partition', show_default=True, default=0.9,
               help='Ground truth data partition ratio between train/validation set')
 @click.option('-t', '--training-files', show_default=True, default=None, multiple=True,
@@ -193,7 +197,7 @@ def _validate_merging(ctx, param, value):
 def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
              epochs, min_epochs, lag, min_delta, optimizer, loss,
              lrate, momentum, weight_decay, warmup, schedule, gamma, step_size,
-             sched_patience, cos_max, partition, training_files,
+             sched_patience, cos_max, cos_min_lr, partition, training_files,
              evaluation_files, workers, threads, suppress_regions,
              suppress_baselines, valid_regions, valid_baselines, merge_regions,
              merge_baselines, augment, topline, ground_truth):
@@ -242,6 +246,7 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
                          'step_size': step_size,
                          'rop_patience': sched_patience,
                          'cos_t_max': cos_max,
+                         'cos_min_lr': cos_min_lr,
                          'patch_size': patch_size,
                          'loss': loss
                          })

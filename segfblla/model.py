@@ -205,13 +205,15 @@ class SegmentationModel(pl.LightningModule):
                     scheduler.step(metric)
 
 
-def _configure_optimizer_and_lr_scheduler(hparams, params, len_train_set=None, loss_tracking_mode='max'):
+def _configure_optimizer_and_lr_scheduler(hparams, params, loss_tracking_mode='max'):
     optimizer = hparams.get("optimizer")
-    lrate = hparams.get("lrate")
+    lr = hparams.get("lr")
     momentum = hparams.get("momentum")
     weight_decay = hparams.get("weight_decay")
     schedule = hparams.get("schedule")
     gamma = hparams.get("gamma")
+    cos_t_max = hparams.get("cos_t_max")
+    cos_min_lr = hparams.get("cos_min_lr")
     step_size = hparams.get("step_size")
     rop_factor = hparams.get("rop_factor")
     rop_patience = hparams.get("rop_patience")
@@ -219,12 +221,12 @@ def _configure_optimizer_and_lr_scheduler(hparams, params, len_train_set=None, l
     completed_epochs = hparams.get("completed_epochs")
 
     # XXX: Warmup is not configured here because it needs to be manually done in optimizer_step()
-    logger.debug(f'Constructing {optimizer} optimizer (lr: {lrate}, momentum: {momentum})')
+    logger.debug(f'Constructing {optimizer} optimizer (lr: {lr}, momentum: {momentum})')
     if optimizer in ['Adam', 'AdamW']:
-        optim = getattr(torch.optim, optimizer)(params, lr=lrate, weight_decay=weight_decay)
+        optim = getattr(torch.optim, optimizer)(params, lr=lr, weight_decay=weight_decay)
     else:
         optim = getattr(torch.optim, optimizer)(params,
-                                                lr=lrate,
+                                                lr=lr,
                                                 momentum=momentum,
                                                 weight_decay=weight_decay)
     lr_sched = {}
@@ -232,7 +234,10 @@ def _configure_optimizer_and_lr_scheduler(hparams, params, len_train_set=None, l
         lr_sched = {'scheduler': lr_scheduler.ExponentialLR(optim, gamma, last_epoch=completed_epochs-1),
                     'interval': 'step'}
     elif schedule == 'cosine':
-        lr_sched = {'scheduler': lr_scheduler.CosineAnnealingLR(optim, gamma, last_epoch=completed_epochs-1),
+        lr_sched = {'scheduler': lr_scheduler.CosineAnnealingLR(optim,
+                                                                cos_t_max,
+                                                                cos_min_lr,
+                                                                last_epoch=completed_epochs-1),
                     'interval': 'step'}
     elif schedule == 'step':
         lr_sched = {'scheduler': lr_scheduler.StepLR(optim, step_size, gamma, last_epoch=completed_epochs-1),
@@ -242,18 +247,6 @@ def _configure_optimizer_and_lr_scheduler(hparams, params, len_train_set=None, l
                                                                 mode=loss_tracking_mode,
                                                                 factor=rop_factor,
                                                                 patience=rop_patience),
-                    'interval': 'step'}
-    elif schedule == '1cycle':
-        if epochs <= 0:
-            raise ValueError('1cycle learning rate scheduler selected but '
-                             'number of epochs is less than 0 '
-                             f'({epochs}).')
-        last_epoch = completed_epochs*len_train_set if completed_epochs else -1
-        lr_sched = {'scheduler': lr_scheduler.OneCycleLR(optim,
-                                                         max_lr=lrate,
-                                                         epochs=epochs,
-                                                         steps_per_epoch=len_train_set,
-                                                         last_epoch=last_epoch),
                     'interval': 'step'}
     elif schedule != 'constant':
         raise ValueError(f'Unsupported learning rate scheduler {schedule}.')
