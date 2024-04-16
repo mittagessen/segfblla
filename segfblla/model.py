@@ -178,7 +178,6 @@ class SegmentationModel(pl.LightningModule):
     def configure_optimizers(self):
         return _configure_optimizer_and_lr_scheduler(self.hparams.hyper_params,
                                                      self.net.parameters(),
-                                                     len_train_set=self.hparams.batches_per_epoch,
                                                      loss_tracking_mode='max')
 
     def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
