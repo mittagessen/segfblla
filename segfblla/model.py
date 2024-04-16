@@ -206,7 +206,7 @@ class SegmentationModel(pl.LightningModule):
 
 def _configure_optimizer_and_lr_scheduler(hparams, params, loss_tracking_mode='max'):
     optimizer = hparams.get("optimizer")
-    lr = hparams.get("lr")
+    lrate = hparams.get("lrate")
     momentum = hparams.get("momentum")
     weight_decay = hparams.get("weight_decay")
     schedule = hparams.get("schedule")
@@ -220,12 +220,12 @@ def _configure_optimizer_and_lr_scheduler(hparams, params, loss_tracking_mode='m
     completed_epochs = hparams.get("completed_epochs")
 
     # XXX: Warmup is not configured here because it needs to be manually done in optimizer_step()
-    logger.debug(f'Constructing {optimizer} optimizer (lr: {lr}, momentum: {momentum})')
+    logger.debug(f'Constructing {optimizer} optimizer (lr: {lrate}, momentum: {momentum})')
     if optimizer in ['Adam', 'AdamW']:
-        optim = getattr(torch.optim, optimizer)(params, lr=lr, weight_decay=weight_decay)
+        optim = getattr(torch.optim, optimizer)(params, lr=lrate, weight_decay=weight_decay)
     else:
         optim = getattr(torch.optim, optimizer)(params,
-                                                lr=lr,
+                                                lrate=lrate,
                                                 momentum=momentum,
                                                 weight_decay=weight_decay)
     lr_sched = {}
