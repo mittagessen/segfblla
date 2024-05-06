@@ -342,34 +342,37 @@ class BaselineSet(Dataset):
                 # skip lines of classes not present in the training set
                 continue
             for line in lines:
-                # buffer out line to desired width
-                line = [k for k, g in groupby(line)]
-                line = np.array(line)
-                shp_line = geom.LineString(line)
-                split_offset = min(5, shp_line.length/2)
-                line_pol = shp_line.buffer(self.line_width/2, cap_style=2)
-                # negative coords get ignored by skimage.draw.polygon
-                line_pol = np.array(line_pol.boundary.coords, dtype=int) - (j, i)
-                rr, cc = polygon(line_pol[:, 1], line_pol[:, 0], shape=image.shape[1:])
-                t[cls_idx, rr, cc] = 1
-                split_pt = shp_line.interpolate(split_offset).buffer(0.001)
-                # top
-                start_sep = split(shp_line, split_pt).geoms[0].buffer(self.line_width, cap_style=3)
-                # start_sep in image
-                if start_sep:
-                    start_sep = np.array(start_sep.boundary.coords, dtype=int) - (j, i)
-                    rr_s, cc_s = polygon(start_sep[:, 1], start_sep[:, 0], shape=image.shape[1:])
-                    t[start_sep_cls, rr_s, cc_s] = 1
-                    t[start_sep_cls, rr, cc] = 0
-                split_pt = shp_line.interpolate(-split_offset).buffer(0.001)
-                # top
-                end_sep = split(shp_line, split_pt).geoms[-1].buffer(self.line_width, cap_style=3)
-                # end_sep in image
-                if end_sep:
-                    end_sep = np.array(end_sep.boundary.coords, dtype=int) - (j, i)
-                    rr_s, cc_s = polygon(end_sep[:, 1], end_sep[:, 0], shape=image.shape[1:])
-                    t[end_sep_cls, rr_s, cc_s] = 1
-                    t[end_sep_cls, rr, cc] = 0
+                try:
+                    # buffer out line to desired width
+                    line = [k for k, g in groupby(line)]
+                    line = np.array(line)
+                    shp_line = geom.LineString(line)
+                    split_offset = min(5, shp_line.length/2)
+                    line_pol = shp_line.buffer(self.line_width/2, cap_style=2)
+                    # negative coords get ignored by skimage.draw.polygon
+                    line_pol = np.array(line_pol.boundary.coords, dtype=int) - (j, i)
+                    rr, cc = polygon(line_pol[:, 1], line_pol[:, 0], shape=image.shape[1:])
+                    t[cls_idx, rr, cc] = 1
+                    split_pt = shp_line.interpolate(split_offset).buffer(0.001)
+                    # top
+                    start_sep = split(shp_line, split_pt).geoms[0].buffer(self.line_width, cap_style=3)
+                    # start_sep in image
+                    if start_sep:
+                        start_sep = np.array(start_sep.boundary.coords, dtype=int) - (j, i)
+                        rr_s, cc_s = polygon(start_sep[:, 1], start_sep[:, 0], shape=image.shape[1:])
+                        t[start_sep_cls, rr_s, cc_s] = 1
+                        t[start_sep_cls, rr, cc] = 0
+                    split_pt = shp_line.interpolate(-split_offset).buffer(0.001)
+                    # top
+                    end_sep = split(shp_line, split_pt).geoms[-1].buffer(self.line_width, cap_style=3)
+                    # end_sep in image
+                    if end_sep:
+                        end_sep = np.array(end_sep.boundary.coords, dtype=int) - (j, i)
+                        rr_s, cc_s = polygon(end_sep[:, 1], end_sep[:, 0], shape=image.shape[1:])
+                        t[end_sep_cls, rr_s, cc_s] = 1
+                        t[end_sep_cls, rr, cc] = 0
+                except:
+                    pass
         for key, regions in target['regions'].items():
             try:
                 cls_idx = self.class_mapping['regions'][key]
@@ -377,9 +380,12 @@ class BaselineSet(Dataset):
                 # skip regions of classes not present in the training set
                 continue
             for region in regions:
-                region = np.array(region.boundary, dtype=int) - (j, i)
-                rr, cc = polygon(region[:, 1], region[:, 0], shape=image.shape[1:])
-                t[cls_idx, rr, cc] = 1
+                try:
+                    region = np.array(region.boundary, dtype=int) - (j, i)
+                    rr, cc = polygon(region[:, 1], region[:, 0], shape=image.shape[1:])
+                    t[cls_idx, rr, cc] = 1
+                except:
+                    pass
         target = t
         if self.aug:
             image = image.permute(1, 2, 0).numpy()
