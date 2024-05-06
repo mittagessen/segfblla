@@ -208,12 +208,11 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
 
     from threadpoolctl import threadpool_limits
 
-    from kraken.lib.progress import KrakenTrainProgressBar
     from segfblla.dataset import BaselineDataModule
     from segfblla.model import SegmentationModel
 
     from pytorch_lightning import Trainer
-    from pytorch_lightning.callbacks import RichModelSummary, ModelCheckpoint
+    from pytorch_lightning.callbacks import RichModelSummary, ModelCheckpoint, RichProgressBar
 
     if not (0 <= freq <= 1) and freq % 1.0 != 0:
         raise click.BadOptionUsage('freq', 'freq needs to be either in the interval [0,1.0] or a positive integer.')
@@ -323,7 +322,7 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
 
     cbs = [RichModelSummary(max_depth=2)]
     if not ctx.meta['verbose']:
-        cbs.append(KrakenTrainProgressBar(leave=True))
+        cbs.append(RichProgressBar(leave=True))
 
     checkpoint_callback = ModelCheckpoint(dirpath=output, save_top_k=5, monitor='val_mean_iu', mode='max')
     cbs.append(checkpoint_callback)
