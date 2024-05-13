@@ -182,6 +182,14 @@ def _validate_merging(ctx, param, value):
               help='Baseline type merge mapping. Same syntax as `--merge-regions`',
               multiple=True,
               callback=_validate_merging)
+@click.option('--merge-all-baselines/--no-merge-baselines',
+              show_default=True,
+              default=False,
+              help='Merge all baseline types into `default`')
+@click.option('--merge-all-regions/--no-merge-regions',
+              show_default=True,
+              default=False,
+              help='Merge all region types into `default`')
 @click.option('--augment/--no-augment',
               show_default=True,
               default=SEGMENTATION_HYPER_PARAMS['augment'],
@@ -200,7 +208,8 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
              sched_patience, cos_max, cos_min_lr, partition, training_files,
              evaluation_files, workers, threads, suppress_regions,
              suppress_baselines, valid_regions, valid_baselines, merge_regions,
-             merge_baselines, augment, topline, ground_truth):
+             merge_baselines, merge_all_baselines, merge_all_regions, augment,
+             topline, ground_truth):
     """
     Trains a baseline labeling model for layout analysis
     """
@@ -298,8 +307,10 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
                                      partition=partition,
                                      valid_baselines=valid_baselines,
                                      merge_baselines=merge_baselines,
+                                     merge_all_baselines=merge_all_baselines,
                                      valid_regions=valid_regions,
                                      merge_regions=merge_regions,
+                                     merge_all_regions=merge_all_regions,
                                      batch_size=batch_size,
                                      num_workers=workers,
                                      topline=topline,

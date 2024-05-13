@@ -24,6 +24,7 @@ APP_NAME = 'segfblla'
 
 logging.captureWarnings(True)
 logger = logging.getLogger('segfblla')
+logging.getLogger("lightning.fabric.utilities.seed").setLevel(logging.ERROR)
 
 # install rich traceback handler
 install(suppress=[click])

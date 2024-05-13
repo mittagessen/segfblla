@@ -59,8 +59,10 @@ class BaselineDataModule(pl.LightningDataModule):
                  augmentation: bool = False,
                  valid_baselines: Sequence[str] = None,
                  merge_baselines: Dict[str, Sequence[str]] = None,
+                 merge_all_baselines: bool = False,
                  valid_regions: Sequence[str] = None,
                  merge_regions: Dict[str, Sequence[str]] = None,
+                 merge_all_regions: bool = False,
                  batch_size: int = 16,
                  num_workers: int = 8,
                  partition: Optional[float] = 0.95,
@@ -88,6 +90,8 @@ class BaselineDataModule(pl.LightningDataModule):
                                 merge_baselines=self.hparams.merge_baselines,
                                 valid_regions=self.hparams.valid_regions,
                                 merge_regions=self.hparams.merge_regions,
+                                merge_all_baselines=self.hparams.merge_all_baselines,
+                                merge_all_regions=self.hparams.merge_all_regions,
                                 patch_size = self.hparams.patch_size)
 
         for page in train_data:
@@ -100,6 +104,8 @@ class BaselineDataModule(pl.LightningDataModule):
                                   merge_baselines=self.hparams.merge_baselines,
                                   valid_regions=self.hparams.valid_regions,
                                   merge_regions=self.hparams.merge_regions,
+                                  merge_all_baselines=self.hparams.merge_all_baselines,
+                                  merge_all_regions=self.hparams.merge_all_regions,
                                   patch_size = self.hparams.patch_size)
 
             for page in val_data:
@@ -186,8 +192,10 @@ class BaselineSet(Dataset):
                  augmentation: bool = False,
                  valid_baselines: Sequence[str] = None,
                  merge_baselines: Dict[str, Sequence[str]] = None,
+                 merge_all_baselines: bool = False,
                  valid_regions: Sequence[str] = None,
                  merge_regions: Dict[str, Sequence[str]] = None,
+                 merge_all_regions: bool = False,
                  patch_size: Union[int, Tuple[int, int]] = (512, 512)):
         """
         Creates a dataset for a text-line and region segmentation model.
@@ -201,11 +209,14 @@ class BaselineSet(Dataset):
             merge_baselines: Sequence of baseline identifiers to merge.  Note
                              that merging occurs after entities not in valid_*
                              have been discarded.
+            merge_all_baselines: Collapse all baseline types into default
+                                 class.
             valid_regions: Sequence of valid region identifiers. If `None` all
                            are valid.
             merge_regions: Sequence of region identifiers to merge. Note that
                            merging occurs after entities not in valid_* have
                            been discarded.
+            merge_all_regions: Collapse all region types into default class.
             patch_size: Size of the image patch to return.
         """
         super().__init__()
@@ -219,9 +230,14 @@ class BaselineSet(Dataset):
         self.class_stats = {'baselines': defaultdict(int), 'regions': defaultdict(int)}
         self.num_classes = 2
         self.mbl_dict = merge_baselines if merge_baselines is not None else {}
+        if merge_all_baselines:
+            self.mbl_dict = defaultdict(lambda: 'default')
         self.mreg_dict = merge_regions if merge_regions is not None else {}
+        if merge_all_regions:
+            self.mreg_dict = defaultdict(lambda: 'default')
         self.valid_baselines = valid_baselines
         self.valid_regions = valid_regions
+
         if isinstance(patch_size, Sequence):
             if len(patch_size) != 2:
                 raise ValueError(f'patch_size={patch_size} needs to be of length 2')
