@@ -73,13 +73,25 @@ class BaselineDataModule(L.LightningDataModule):
         self.save_hyperparameters()
 
         logger.info(f'Parsing {len(train_files)} XML files for training data')
-        train_data = [XMLPage(file).to_container() for file in self.hparams.train_files]
+        train_data = []
+        for file in self.hparams.train_files:
+            doc = XMLPage(file).to_container()
+            if doc.imagename.exists():
+                train_data.append(doc)
+            else:
+                logger.warning(f'Image for {file} does not exist')
 
         val_data = None
 
         if val_files:
             logger.info(f'Parsing {len(val_files)} XML files for validation data')
-            val_data = [XMLPage(file).to_container() for file in self.hparams.val_files]
+            val_data = []
+            for file in self.hparams.val_files:
+                doc = XMLPage(file).to_container()
+                if doc.imagename.exists():
+                    val_data.append(doc)
+                else:
+                    logger.warning(f'Image for {file} does not exist')
 
         if not train_data:
             raise ValueError('No training data provided. Please add some.')
