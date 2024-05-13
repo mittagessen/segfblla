@@ -242,11 +242,8 @@ class BaselineSet(Dataset):
         self.class_stats = {'baselines': defaultdict(int), 'regions': defaultdict(int)}
         self.num_classes = 2
         self.mbl_dict = merge_baselines if merge_baselines is not None else {}
-        if merge_all_baselines:
-            self.mbl_dict = defaultdict(lambda: 'default')
-        self.mreg_dict = merge_regions if merge_regions is not None else {}
-        if merge_all_regions:
-            self.mreg_dict = defaultdict(lambda: 'default')
+        self.merge_all_baselines = merge_all_baselines
+        self.merge_all_regions = merge_all_regions
         self.valid_baselines = valid_baselines
         self.valid_regions = valid_regions
 
@@ -297,8 +294,11 @@ class BaselineSet(Dataset):
         baselines_ = defaultdict(list)
         for line in doc.lines:
             if self.valid_baselines is None or set(line.tags.values()).intersection(self.valid_baselines):
-                tags = set(line.tags.values()).intersection(self.valid_baselines) if self.valid_baselines else line.tags.values()
-                tags = set([self.mbl_dict.get(v, v) for v in tags])
+                if self.merge_all_baselines:
+                    tags = ['default']
+                else:
+                    tags = set(line.tags.values()).intersection(self.valid_baselines) if self.valid_baselines else line.tags.values()
+                    tags = set([self.mbl_dict.get(v, v) for v in tags])
                 for tag in tags:
                     baselines_[tag].append(line.baseline)
                     self.class_stats['baselines'][tag] += 1
@@ -310,7 +310,10 @@ class BaselineSet(Dataset):
         regions_ = defaultdict(list)
         for k, v in doc.regions.items():
             if self.valid_regions is None or k in self.valid_regions:
-                reg_type = self.mreg_dict.get(k, k)
+                if self.merge_all_baselines:
+                    reg_type = 'default'
+                else:
+                    reg_type = self.mreg_dict.get(k, k)
                 regions_[reg_type].extend(v)
                 self.class_stats['baselines'][reg_type] += len(v)
                 if reg_type not in self.class_mapping['regions']:
