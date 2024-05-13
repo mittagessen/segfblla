@@ -22,7 +22,7 @@ from typing import (TYPE_CHECKING, Any, Callable, Dict, Literal, Optional,
                     Sequence, Union)
 
 import numpy as np
-import pytorch_lightning as pl
+import lightning.pytorch as L
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SegmentationModel(pl.LightningModule):
+class SegmentationModel(L.LightningModule):
     def __init__(self,
                  num_classes: int,
                  hyper_params: Dict = None,

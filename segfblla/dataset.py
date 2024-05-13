@@ -24,7 +24,7 @@ import cv2
 cv2.setNumThreads(0)
 
 import numpy as np
-import pytorch_lightning as pl
+import lightning.pytorch as L
 import shapely.geometry as geom
 import torch
 import torch.nn.functional as F
@@ -51,7 +51,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class BaselineDataModule(pl.LightningDataModule):
+class BaselineDataModule(L.LightningDataModule):
     def __init__(self,
                  train_files: Sequence[Union[str, 'PathLike']],
                  val_files: Optional[Sequence[Union[str, 'PathLike']]] = None,

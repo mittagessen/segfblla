@@ -220,8 +220,8 @@ def segtrain(ctx, batch_size, output, line_width, patch_size, freq, quit,
     from segfblla.dataset import BaselineDataModule
     from segfblla.model import SegmentationModel
 
-    from pytorch_lightning import Trainer
-    from pytorch_lightning.callbacks import RichModelSummary, ModelCheckpoint, RichProgressBar
+    from lightning.pytorch import Trainer
+    from lightning.pytorch.callbacks import RichModelSummary, ModelCheckpoint, RichProgressBar
 
     if not (0 <= freq <= 1) and freq % 1.0 != 0:
         raise click.BadOptionUsage('freq', 'freq needs to be either in the interval [0,1.0] or a positive integer.')
