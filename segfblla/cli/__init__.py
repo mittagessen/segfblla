@@ -8,7 +8,7 @@ from rich.traceback import install
 from kraken.lib import log
 
 from .train import segtrain
-from .pred import segment
+from .pred import segment, heatmap
 
 def set_logger(logger=None, level=logging.ERROR):
     logger.addHandler(RichHandler(rich_tracebacks=True))
@@ -67,6 +67,7 @@ def cli(ctx, verbose, seed, deterministic, device, precision, autocast):
 
 cli.add_command(segtrain)
 cli.add_command(segment)
+cli.add_command(heatmap)
 
 if __name__ == '__main__':
     cli()

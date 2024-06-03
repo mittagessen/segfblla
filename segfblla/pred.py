@@ -26,12 +26,12 @@ import numpy as np
 import shapely.geometry as geom
 import torch.nn.functional as F
 
+from PIL import Image
 from typing import Any, Callable, Dict, Literal, TYPE_CHECKING
 from torchvision.transforms import v2
 
 from transformers import SegformerConfig, SegformerForSemanticSegmentation
 
-from segfblla.tiles import ImageSlicer
 
 from kraken.blla import vec_regions, vec_lines
 from kraken.containers import Segmentation, BaselineLine
@@ -59,6 +59,7 @@ def load_model_checkpoint(filename: 'PathLike', device: torch.device) -> 'nn.Mod
     net.class_mapping = lm['BaselineDataModule']['class_mapping']
     net.topline = lm['BaselineDataModule'].get('topline', False)
     net.patch_size = lm['BaselineDataModule'].get('patch_size', (512, 512))
+    net.num_classes = lm['hyper_parameters']['num_classes']
     return net
 
 
@@ -85,40 +86,80 @@ def compute_segmentation_map(im: PIL.Image.Image,
     model.eval()
     model.to(device)
 
+    from torch.utils.data import DataLoader
+    from pytorch_toolbelt.inference.tiles import ImageSlicer, TileMerger
+    from pytorch_toolbelt.utils.torch_utils import tensor_from_rgb_image, to_numpy
+
     tiler = ImageSlicer(im.size[::-1],
                         tile_size=model.patch_size,
-                        overlap=(32, 32),
-                        batch_size=batch_size)
+                        tile_step=(256, 256),
+                        weight='pyramid')
 
-    callback(tiler.num_batches, 0)
+    merger = TileMerger(tiler.target_shape, model.num_classes, tiler.weight)
+    num_tiles = len(tiler.crops)
+    callback(num_tiles, 0)
 
     transforms = v2.Compose([v2.PILToTensor(),
-                             v2.ConvertDtype(torch.float32),
+                             v2.ToDtype(torch.float32),
                              v2.Normalize(mean=(0.485, 0.456, 0.406),
                                           std=(0.229, 0.224, 0.225)),
                             ]
                            )
 
-    tensor_im = transforms(im)
+    tensor_im = transforms(im).permute(1, 2, 0).numpy()
+
+    tiles = [tensor_from_rgb_image(tile) for tile in tiler.split(tensor_im)]
 
     with torch.autocast(device_type=str(device).split(":")[0], enabled=autocast):
         with torch.no_grad():
-            tiles = []
-            for idx, tile in enumerate(tiler.split(tensor_im)):
+            for tiles_batch, coords_batch in DataLoader(list(zip(tiles, tiler.crops)),
+                                                        batch_size=batch_size,
+                                                        pin_memory=True):
                 logger.debug('Running network forward pass')
-                callback(tiler.num_batches, 1)
-                tiles.append(torch.sigmoid(model(tile.to(device)).logits))
-            tiles = torch.cat(tiles)
-    logger.debug('Upsampling network output')
-    tiles = F.interpolate(tiles, tiler.tile_size, mode='bicubic')
-    logger.debug('Reassembling patches')
-    o = tiler.merge(tiles)
-    o = o.squeeze().cpu().float().numpy()
+                callback(num_tiles, batch_size)
+                tiles_batch = tiles_batch.to(device)
+                o = model(tiles_batch).logits.sigmoid()
+                o = F.interpolate(o, tiler.tile_size, mode='bicubic')
+                merger.integrate_batch(o, coords_batch)
 
-    return {'heatmap': o,
+    merged_mask = np.moveaxis(to_numpy(merger.merge()), 0, -1)
+    merged_mask = tiler.crop_to_orignal_size(merged_mask)
+    merged_mask = np.moveaxis(merged_mask, -1, 0)
+    return {'heatmap': merged_mask,
             'cls_map': model.class_mapping,
             'bounding_regions': None,
             'scal_im': np.array(im)}
+
+
+def heatmap(im: PIL.Image.Image,
+            model: 'nn.Module' = None,
+            device: torch.device = torch.device('cpu'),
+            raise_on_error: bool = False,
+            autocast: bool = True,
+            batch_size: int = 4,
+            callback: Callable[[int, int], Any] = None) -> Segmentation:
+    r"""
+    Only runs the neural part of the segmenter.
+    """
+    def _callback(_total, advance):
+        global total
+        total = _total
+        if callback:
+            callback(_total, advance)
+
+    rets = compute_segmentation_map(im,
+                                    model,
+                                    device,
+                                    batch_size=batch_size,
+                                    autocast=autocast,
+                                    callback=_callback)
+
+    heat = {}
+    for line, idx in rets['cls_map']['baselines'].items():
+        heat['line_' + line] = Image.fromarray((rets['heatmap'][idx]*255).astype('uint8'))
+    for reg, idx in rets['cls_map']['regions'].items():
+        heat['reg_' + reg] = Image.fromarray((rets['heatmap'][idx]*255).astype('uint8'))
+    return heat
 
 
 def segment(im: PIL.Image.Image,

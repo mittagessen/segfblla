@@ -39,6 +39,170 @@ logging.captureWarnings(True)
 logger = logging.getLogger('kraken')
 
 
+@click.command('heatmap')
+@click.pass_context
+@click.version_option()
+@click.option('-B', '--batch-size', show_default=True, type=click.INT,
+              default=1, help='batch sample size')
+@click.option('-i', '--input',
+              type=(click.Path(exists=True, dir_okay=False, path_type=Path),  # type: ignore
+                    click.Path(writable=True, dir_okay=False, path_type=Path)),
+              multiple=True,
+              help='Input-output file pairs. Each input file (first argument) is mapped to one '
+                   'output file (second argument), e.g. `-i input.png output.txt`')
+@click.option('-I', '--batch-input', multiple=True, help='Glob expression to add multiple files at once.')
+@click.option('-o', '--suffix', default='', show_default=True,
+              help='Suffix for output files from batch and PDF inputs.')
+@click.option('-f', '--format-type', type=click.Choice(['image', 'alto', 'page', 'pdf', 'xml']), default='image',
+              help='Sets the default input type. In image mode inputs are image '
+                   'files, alto/page expects XML files in the respective format, pdf '
+                   'expects PDF files with numbered suffixes added to output file '
+                   'names as needed.')
+@click.option('-p', '--pdf-format', default='{src}_{idx:06d}',
+              show_default=True,
+              help='Format for output of PDF files. valid fields '
+                   'are `src` (source file), `idx` (page number), and `uuid` (v4 uuid). '
+                   '`-o` suffixes are appended to this format string.')
+@click.option('-d', '--device', default='cpu', show_default=True,
+              help='Select device to use (cpu, cuda:0, cuda:1, ...)')
+@click.option('-r', '--raise-on-error/--no-raise-on-error', default=False, show_default=True,
+              help='Raises the exception that caused processing to fail in the case of an error')
+@click.option('--threads', default=1, show_default=True, type=click.IntRange(1),
+              help='Size of thread pools for intra-op parallelization')
+@click.option('-m', '--model', show_default=True, help='Baseline detection '
+              ' model to use')
+def heatmap(ctx, batch_size, input, batch_input, suffix, format_type,
+            pdf_format, device, raise_on_error, threads, model):
+    """
+    Segmentation inference with SegFormer models.
+
+    Inputs are defined as one or more pairs `-i input_file output_file`
+    followed by one or more chainable processing commands. Likewise, verbosity
+    is set on all subcommands with the `-v` switch.
+    """
+    import glob
+    import torch
+    import tempfile
+    import uuid
+
+    from threadpoolctl import threadpool_limits
+
+    from segfblla.pred import load_model_checkpoint, heatmap
+
+    from kraken.containers import ProcessingStep
+    from kraken.lib.progress import KrakenProgressBar
+
+    if not model:
+        raise click.UsageError('No model defined with `--model`')
+
+    if ctx.meta['device'] != 'cpu':
+        try:
+            torch.ones(1, device=ctx.meta['device'])
+        except AssertionError as e:
+            if raise_on_error:
+                raise
+            logger.error(f'Device {ctx.meta["device"]} not available: {e.args[0]}.')
+            ctx.exit(1)
+    input_format_type = format_type if format_type != 'pdf' else 'image'
+    raise_failed = raise_on_error
+
+    message(f'Loading model {model}')
+    try:
+        net = load_model_checkpoint(model, device=ctx.meta['device'])
+    except Exception:
+        if raise_on_error:
+            raise
+        raise click.BadOptionUsage('model', f'Invalid model {model}')
+
+    input = list(input)
+    # expand batch inputs
+    if batch_input and suffix:
+        for batch_expr in batch_input:
+            for in_file in glob.glob(batch_expr, recursive=True):
+                input.append((in_file, '{}{}'.format(os.path.splitext(in_file)[0], suffix)))
+
+    # parse pdfs
+    if format_type == 'pdf':
+        import pyvips
+
+        if not batch_input:
+            logger.warning('PDF inputs not added with batch option. Manual output filename will be ignored and `-o` utilized.')
+        new_input = []
+        num_pages = 0
+        for (fpath, _) in input:
+            doc = pyvips.Image.new_from_file(fpath, dpi=300, n=-1, access="sequential")
+            if 'n-pages' in doc.get_fields():
+                num_pages += doc.get('n-pages')
+
+        with KrakenProgressBar() as progress:
+            pdf_parse_task = progress.add_task('Extracting PDF pages', total=num_pages, visible=True if not ctx.meta['verbose'] else False)
+            for (fpath, _) in input:
+                try:
+                    doc = pyvips.Image.new_from_file(fpath, dpi=300, n=-1, access="sequential")
+                    if 'n-pages' not in doc.get_fields():
+                        logger.warning('{fpath} does not contain pages. Skipping.')
+                        continue
+                    n_pages = doc.get('n-pages')
+
+                    dest_dict = {'idx': -1, 'src': fpath, 'uuid': None}
+                    for i in range(0, n_pages):
+                        dest_dict['idx'] += 1
+                        dest_dict['uuid'] = str(uuid.uuid4())
+                        fd, filename = tempfile.mkstemp(suffix='.png')
+                        os.close(fd)
+                        doc = pyvips.Image.new_from_file(fpath, dpi=300, page=i, access="sequential")
+                        logger.info(f'Saving temporary image {fpath}:{dest_dict["idx"]} to {filename}')
+                        doc.write_to_file(filename)
+                        new_input.append((filename, pdf_format.format(**dest_dict) + suffix))
+                        progress.update(pdf_parse_task, advance=1)
+                except pyvips.error.Error:
+                    num_pages -= n_pages
+                    progress.update(pdf_parse_task, total=num_pages)
+                    logger.warning(f'{fpath} is not a PDF file. Skipping.')
+        input = new_input
+
+    if not input:
+        raise click.UsageError('No inputs given with eihter `--input` or `--batch-input`')
+
+    def _segment(input, output, model):
+        if input_format_type != 'image':
+            input = get_input_parser(input_format_type)(input).imagename
+
+        try:
+            im = Image.open(input)
+        except IOError as e:
+            raise click.BadParameter(str(e))
+        message('Segmenting\t', nl=False)
+        try:
+            with KrakenProgressBar() as progress:
+                pred_task = progress.add_task('Segmenting', total=0, visible=True if not ctx.meta['verbose'] else False)
+                res = heatmap(im,
+                              model=model,
+                              device=model.device,
+                              raise_on_error=raise_failed,
+                              batch_size=batch_size,
+                              autocast=ctx.meta['autocast'],
+                              callback=lambda total, advance: progress.update(pred_task, total=total, advance=advance))
+        except Exception:
+            if raise_failed:
+                raise
+            message('\u2717', fg='red')
+            ctx.exit(1)
+
+        for prefix, im in res.items():
+            im.save(f'{prefix}_{output}')
+        message('\u2713', fg='green')
+
+    for io_pair in input:
+        try:
+            with threadpool_limits(limits=threads):
+                _segment(input=io_pair[0], output=io_pair[1], model=net)
+        except Exception as e:
+            logger.error(f'Failed processing {io_pair[0]}: {str(e)}')
+            if raise_failed:
+                raise
+
+
 @click.command('segment')
 @click.pass_context
 @click.version_option()
